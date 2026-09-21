@@ -37,8 +37,9 @@ class YoloSegDetector:
         self.policy.apply()
 
         self.device = device
-        # 显式环境变量优先于启发式查找（理由同 moge_geom._find_moge_weight）
-        w = (os.environ.get("YOLO_WEIGHTS") or _find_yolo_weight(weights_dir)
+        # 显式环境变量优先于启发式查找；失效的路径配置回退（理由见 weight_paths.py）
+        from .weight_paths import resolve_weight
+        w = (resolve_weight("YOLO_WEIGHTS", lambda: _find_yolo_weight(weights_dir))
              or default_weight)
         if not w:
             raise FileNotFoundError(

@@ -603,9 +603,9 @@
      后端已经把三轴投影成 2D 端点（axes_overlay），这里只负责画箭头——
      前端拿不到世界系向量也没有内参，自己没法投影。 */
   var AXIS_STYLE = {
-    up:      { label: "上", color: "#ff2d2d", w: 1.45 },   // 上 = 重力反方向，最重要
-    right:   { label: "右", color: "#ff7a7a", w: 1.0  },
-    forward: { label: "前", color: "#b81414", w: 1.0  }
+    up:      { label: "上", color: "#ff2d2d", w: 1.45, stagger: -1 },  // 上 = 重力反方向，最重要
+    right:   { label: "右", color: "#ff7a7a", w: 1.0,  stagger:  0 },
+    forward: { label: "前", color: "#b81414", w: 1.0,  stagger:  1 }
   };
   function drawArrow(x0, y0, x1, y1, color, width){
     var dx = x1 - x0, dy = y1 - y0, len = Math.sqrt(dx*dx + dy*dy);
@@ -647,20 +647,28 @@
         return;
       }
       drawArrow(o[0], o[1], a.tip_px[0], a.tip_px[1], st.color, base * st.w);
+      // 标签放在箭头**尖端之外**，再按轴做一次垂直错位。
+      // 俯拍时 up 与 forward 的投影会天然靠得很近，只按尖端+固定偏移会叠字。
       ctx.font = font; ctx.fillStyle = st.color; ctx.textBaseline = "middle";
-      ctx.fillText(st.label, a.tip_px[0] + base*3, a.tip_px[1]);
+      var dx = a.tip_px[0] - o[0], dy = a.tip_px[1] - o[1];
+      var dl = Math.sqrt(dx*dx + dy*dy) || 1;
+      var gap = base * 3;
+      var sx = (st.stagger || 0) * base * 9;                 // 垂直错位
+      ctx.fillText(st.label,
+                   a.tip_px[0] + dx/dl*gap - dy/dl*sx,
+                   a.tip_px[1] + dy/dl*gap + dx/dl*sx);
     });
 
-    // 说明：坐标系是踩在地上的，每根轴的实际 3D 长度
+    // 说明放在画布左上角（固定位置），避免压在箭头/锚点上
     ctx.font = "600 " + Math.max(11, Math.round(sentW/95)) + "px ui-monospace,Menlo,Consolas,monospace";
-    ctx.fillStyle = "rgba(0,0,0,.62)";
     var cap = "世界系坐标轴 · 轴长 " + fmt(ax.scale_m, "m", 2) +
-              " · 锚点 " + (ax.anchor === "ground" ? "地平面" : "视线2m");
+              " · 锚点 " + (ax.anchor === "ground" ? "地平面" : "视线2m") +
+              " · 上=重力反方向";
     var cw = ctx.measureText(cap).width + 16;
-    var cyy = Math.max(0, o[1] - Math.max(14, Math.round(sentW/60)) - 22);
-    ctx.fillRect(o[0] - cw/2, cyy, cw, 20);
+    ctx.fillStyle = "rgba(0,0,0,.62)";
+    ctx.fillRect(8, 8, cw, 22);
     ctx.fillStyle = "#ffd7d7"; ctx.textBaseline = "middle";
-    ctx.fillText(cap, o[0] - cw/2 + 8, cyy + 11);
+    ctx.fillText(cap, 16, 19);
   }
   function draw(){
     if(!imgEl) return;

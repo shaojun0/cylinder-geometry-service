@@ -190,6 +190,33 @@ def test_core(data_dir: str | None) -> None:
     check(d4["up"]["degenerate"] is True,
           f"与视线平行的轴被标为 degenerate (length_px={d4['up']['length_px']})")
 
+    # ---- 权重来源仲裁：失效的路径配置必须回退，而不是硬顶 --------------
+    # 实测踩到：权重目录改名后启动脚本里的 MOGE_WEIGHTS 还指着旧路径，而 MoGe 的
+    # from_pretrained 会把它当成 HF repo id 去联网，抛与真实原因无关的
+    # `HFValidationError: Repo id must be in the form ...`。
+    from models.weight_paths import resolve_weight
+    _key = "DSH_TEST_WEIGHTS"
+    _saved = os.environ.get(_key)
+    try:
+        os.environ[_key] = "/nonexistent/weights/xyz.pt"
+        check(resolve_weight(_key, lambda: "FALLBACK") == "FALLBACK",
+              "失效的绝对路径配置 -> 回退到查找器")
+        os.environ[_key] = "Ruicheng/moge-2-vitl-normal"
+        check(resolve_weight(_key, lambda: "FALLBACK") == "Ruicheng/moge-2-vitl-normal",
+              "非路径值（HF repo id）-> 原样采用")
+        with _tf.NamedTemporaryFile(suffix=".pt") as _ntf:
+            os.environ[_key] = _ntf.name
+            check(resolve_weight(_key, lambda: "FALLBACK") == _ntf.name,
+                  "存在的路径 -> 原样采用")
+        del os.environ[_key]
+        check(resolve_weight(_key, lambda: "FALLBACK") == "FALLBACK",
+              "未设置环境变量 -> 用查找器")
+    finally:
+        if _saved is None:
+            os.environ.pop(_key, None)
+        else:
+            os.environ[_key] = _saved
+
     if not data_dir:
         print("  (未提供 --data，跳过真实数据回归)")
         return

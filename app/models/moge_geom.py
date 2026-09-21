@@ -101,9 +101,12 @@ class MogeGeometry:
         self.torch = torch
         self.device = device
         self.resolution_level = resolution_level
-        # 环境变量是**显式配置**，优先级高于启发式查找——否则运维设了
-        # MOGE_WEIGHTS 也会被"找到了别的 .pt"悄悄盖掉（实测踩到过）。
-        local = os.environ.get("MOGE_WEIGHTS") or _find_moge_weight(weights_dir)
+        # 环境变量是**显式配置**，优先级高于启发式查找；但失效的路径配置
+        # （被移动/删除后 env 还指着旧路径）必须回退，否则 MoGe 会把它当成
+        # HF repo id 去联网下载，抛一个与真实原因无关的 HFValidationError。
+        from .weight_paths import resolve_weight
+        local = resolve_weight("MOGE_WEIGHTS",
+                               lambda: _find_moge_weight(weights_dir))
         src = local if local else repo
         self.source = src
         self.model = MoGeModel.from_pretrained(src).to(device).eval()
