@@ -1,0 +1,62 @@
+# =============================================================================
+#  构建上下文过滤（构建上下文 = ascend/ 目录）
+#
+#  目的：本服务镜像里只应该有 app/ 的代码 + 构建期抓取的权重，
+#        宿主机上的权重文件、虚拟环境、缓存都不该进上下文。
+#        权重动辄 1.7 GB，塞进构建上下文会让每次 build 都慢到不可用。
+#
+#  用法：
+#    docker build -f Dockerfile --target cpu .        # 上下文 = 当前目录
+# =============================================================================
+
+# ---- SPEC 2.3 强制要求排除的项 ---------------------------------------------
+# 权重本体：不进上下文，改由 Dockerfile 的 weights 阶段构建期抓取，
+# 或运行时 -v /path/to/weights:/app/weights 挂载。
+weights/*.pt
+weights/*.pth
+*.tar
+.git
+__pycache__
+*.pyc
+docs/
+
+# ---- 其余权重格式（同样是大文件，理由同上）---------------------------------
+# SPEC 只点名了 *.pt / *.pth，但 SAM 的 model.safetensors 也有 358 MB，
+# 一起排掉才真正达到「不让 2 GB 权重进上下文」的目的。
+weights/*.safetensors
+weights/*.bin
+weights/*.ckpt
+weights/*.onnx
+weights/*.tar
+weights/*.tar.gz
+weights/**/*.safetensors
+weights/**/*.bin
+weights/**/*.ckpt
+
+# ---- Python 产物 ------------------------------------------------------------
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# ---- 编辑器 / 系统垃圾 ------------------------------------------------------
+.DS_Store
+*.swp
+*.swo
+*~
+*.log
+.env
+.idea/
+.vscode/
+
+# ---- 与镜像内容无关的文件 ---------------------------------------------------
+# 只影响上下文体积，不影响 Dockerfile 的行为（Dockerfile 本身绝不能被 ignore）。
+SPEC.md
+scripts/
+docker-compose*.yml

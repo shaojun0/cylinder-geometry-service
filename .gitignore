@@ -1,0 +1,56 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---- 模型权重（体积大，不入库；见 README「权重」一节）----
+weights/
+*.pt
+*.pth
+*.safetensors
+*.onnx
+*.engine
+*.ckpt
+
+# ---- 训练/推理产物 ----
+runs/
+out/
+outputs/
+*.log
+wandb/
+lightning_logs/
+
+# ---- 数据 ----
+data/
+datasets/
+*.npy
+*.npz
+*.ply
+*.glb
+*.obj
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---- 本地环境 ----
+.env
+.env.*
+!.env.example
+*.local

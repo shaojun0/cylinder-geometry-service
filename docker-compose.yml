@@ -1,0 +1,142 @@
+# =============================================================================
+#  气瓶几何量测服务 —— docker compose 编排（昇腾 NPU）
+#
+#  用 `docker compose`（v2）。注意本机的 docker-compose 是 1.25.0，
+#  它不支持 `profiles:`，请用 v2：
+#      docker compose --profile cpu up --build cylinder-geom-cpu    # 本地校验
+#      docker compose up -d --build cylinder-geom                   # 昇腾机器
+#
+#  设计要点
+#    1. 设备号与 ASCEND_RT_VISIBLE_DEVICES 全部参数化，不写死：
+#         NPU_DEVICE=0 docker compose up -d            # 单卡
+#         NPU_DEVICE=3 ASCEND_RT_VISIBLE_DEVICES=3 ... # 换卡
+#       多卡请参考下方「多卡」注释块（compose 无法在 devices 里做循环）。
+#    2. 权重：镜像里已经 bake 了 /app/weights（Dockerfile 的 weights 阶段），
+#       默认不再挂载，避免用一个空目录把镜像里的权重盖掉。
+#       要用外部权重时打开下面的 WEIGHTS_HOST_DIR 注释块。
+#    3. 网络：默认 host 网络（与 MinerU 的昇腾运行方式一致，NPU 场景下最省事）；
+#       host 模式下 `ports:` 会被忽略，因此这里注释掉，只在 bridge 模式启用。
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # 正式服务（昇腾 NPU）
+  # ---------------------------------------------------------------------------
+  cylinder-geom:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: ascend
+      args:
+        # 硬件型号只改这一个值（A2 / A3 / 300I Duo）
+        ASCEND_BASE_IMAGE: ${ASCEND_BASE_IMAGE:-quay.io/ascend/torch-npu:2.7.1.post4-910b-ubuntu22.04-py3.11}
+        FETCH_WEIGHTS: "${FETCH_WEIGHTS:-1}"
+        STRICT_WEIGHTS: "${STRICT_WEIGHTS:-0}"
+        HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+        YOLO_WEIGHTS_URL: ${YOLO_WEIGHTS_URL:-}
+        WEIGHTS_TARBALL_URL: ${WEIGHTS_TARBALL_URL:-}
+
+    image: ${ASCEND_IMAGE:-cylinder-geom:ascend}
+    container_name: ${CONTAINER_NAME:-cylinder-geom}
+    restart: ${RESTART_POLICY:-unless-stopped}
+    user: root
+
+    # 昇腾容器跑 PyTorch 基本都要这几项（对齐 MinerU 的 npu.Dockerfile 运行方式）
+    privileged: true
+    ipc: host
+    network_mode: ${NETWORK_MODE:-host}
+
+    # ---- 设备节点：device 号参数化 -----------------------------------------
+    devices:
+      - /dev/davinci${NPU_DEVICE:-0}:/dev/davinci${NPU_DEVICE:-0}
+      - /dev/davinci_manager:/dev/davinci_manager
+      - /dev/devmm_svm:/dev/devmm_svm
+      - /dev/hisi_hdc:/dev/hisi_hdc
+    # ---- 多卡示例（把上面的 davinci 那一行换成下面 8 行）---------------------
+    #   - /dev/davinci0:/dev/davinci0
+    #   - /dev/davinci1:/dev/davinci1
+    #   - /dev/davinci2:/dev/davinci2
+    #   - /dev/davinci3:/dev/davinci3
+    #   - /dev/davinci4:/dev/davinci4
+    #   - /dev/davinci5:/dev/davinci5
+    #   - /dev/davinci6:/dev/davinci6
+    #   - /dev/davinci7:/dev/davinci7
+
+    # ---- 驱动 / 工具链：必须从宿主机挂进来（容器里没有驱动）----------------
+    volumes:
+      - /usr/local/dcmi:/usr/local/dcmi
+      - /usr/local/bin/npu-smi:/usr/local/bin/npu-smi
+      - /usr/local/Ascend/driver:/usr/local/Ascend/driver
+      - /var/log/npu:/usr/slog
+      # 外部权重覆盖（会盖掉镜像内的 /app/weights，确认目录里有东西再打开）：
+      # - ${WEIGHTS_HOST_DIR:-./weights}:/app/weights:ro
+      # 权重为只读挂载时，缓存目录要另给一个可写位置：
+      # - ${HF_CACHE_HOST_DIR:-./hf-cache}:/root/.cache/huggingface
+
+    environment:
+      # 选卡：容器内可见的昇腾设备列表（默认单卡 0）
+      ASCEND_RT_VISIBLE_DEVICES: ${ASCEND_RT_VISIBLE_DEVICES:-0}
+      WEIGHTS_DIR: ${WEIGHTS_DIR:-/app/weights}
+      PYTHONUNBUFFERED: "1"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # 单 NPU 显存有限：同一时刻只驻留一个模型（app/model_hub.py 的默认值）
+      MAX_RESIDENT_MODELS: "${MAX_RESIDENT_MODELS:-1}"
+      # 想强制设备时可以打开（默认让 app 自动探测 npu/cuda/cpu）：
+      # MODEL_DEVICE: ${MODEL_DEVICE:-npu:0}
+      # --- Atlas 300I Duo (310P) 专用提示，见 docs/ASCEND.md ---
+      # 310P 不支持 bf16、不支持图模式。MinerU 是 vllm 后端所以加
+      # `--enforce-eager --dtype float16`；本服务没有 vllm，不存在等价的 CLI flag，
+      # 这两个变量是给应用/模型侧读取的约定（当前 app 代码尚未读取，属未验证项）。
+      CYLINDER_DTYPE: ${CYLINDER_DTYPE:-}
+      CYLINDER_EAGER: ${CYLINDER_EAGER:-}
+
+    # host 网络下这两行无效/冲突，故注释；改 bridge 时一起打开：
+    # ports:
+    #   - "${HTTP_PORT:-8000}:8000"
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+
+    # 日志限流：本机 /userdata 只有几 GB，不要让 json 日志把它吃满
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+    # 健康检查沿用镜像内置的 HEALTHCHECK（python urllib 打 /healthz，不依赖 curl）
+    # healthcheck:
+    #   test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4).status == 200 else 1)"]
+    #   interval: 30s
+    #   timeout: 5s
+    #   retries: 3
+    #   start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # 本地可行性校验服务（cpu target，不需要 NPU）
+  #   docker compose --profile cpu up --build cylinder-geom-cpu
+  # ---------------------------------------------------------------------------
+  cylinder-geom-cpu:
+    profiles: ["cpu"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: cpu
+      args:
+        PYTHON_VERSION: "${PYTHON_VERSION:-3.11}"
+        SMOKE_TEST: "1"
+    image: ${CPU_IMAGE:-cylinder-geom:cpu}
+    container_name: ${CPU_CONTAINER_NAME:-cylinder-geom-cpu}
+    network_mode: bridge
+    ports:
+      - "${HTTP_PORT:-8000}:8000"
+    environment:
+      # cpu target 只做结构校验，不做真实推理
+      MODEL_DEVICE: cpu
+      WEIGHTS_DIR: /app/weights
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"

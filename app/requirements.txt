@@ -1,0 +1,21 @@
+# 气瓶几何服务 —— Python 依赖
+#
+# 说明：
+#  * torch / torch_npu 不在这里声明。它们由基础镜像提供（昇腾镜像自带 CANN + torch_npu），
+#    装错版本会直接破坏 NPU 可用性。本地 CPU 校验镜像也不装 torch。
+#  * 只列纯 Python 或带 aarch64 wheel 的包，保证 CPU target 能顺利构建。
+
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.0
+python-multipart>=0.0.9
+
+numpy>=1.24
+pillow>=10.0
+opencv-python-headless>=4.8
+
+# 模型侧（昇腾镜像里安装；CPU 校验镜像可跳过）
+#   transformers>=4.40       # SAM
+#   huggingface-hub>=0.23    # 权重下载 / 本地加载
+#   ultralytics>=8.2         # YOLO-seg
+# MoGe 本体由代码仓库安装（pip install --no-deps -e .），不在此声明。
