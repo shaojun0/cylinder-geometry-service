@@ -22,8 +22,10 @@ elev3d = asin( (p_base − p_top) · up / ‖p_base − p_top‖ )
   适配 NPU 显存受限场景（懒加载 + LRU 驱逐 + 线程安全）。
 - **零样本分割**：SAM 用已有的检测框当 prompt 生成掩码，
   **无需像素级人工标注**；掩码多边形可直接导出为 YOLO-seg 训练标签。
-- **重力对齐世界系**：从单目表面法向估计重力方向，
-  并在 `/healthz` 暴露 `plane_rms` 作为置信度（rms 小 = 确实锁定单一物理平面）。
+- **重力对齐世界系（带可靠性闸门）**：从单目表面法向估计重力方向。
+  只有「地板先验」胜出时才把 up 当作**从场景里量出来的**结果，否则退回相机 up
+  并置 `gravity_reliable: false`；`plane_rms_cm`（rms 小 = 确实锁定单一物理平面）
+  随 `geometry` 响应返回，作为平面精修的置信度。
 - **几何中心 ≠ 物理重心**：拟合圆柱后取轴线中点，消除「可见表面质心朝相机偏 `(2/π)R`」的系统偏差。
 - **昇腾适配**：`CYLINDER_DTYPE` / `CYLINDER_EAGER` 策略，310P 自动强制 fp16 + eager。
 - **可降级**：权重缺失时返回结构化 `weights_missing` 错误，不会 500。
@@ -64,7 +66,14 @@ elev3d = asin( (p_base − p_top) · up / ‖p_base − p_top‖ )
 **1. 重力轴必须做物理硬过滤，不能只看支撑率。**
 室内最大的表面通常是墙面，纯按支撑率选**一定会选中墙**。实测某张图：
 背墙支撑率 0.386（角度 75.8°）、地板支撑率仅 0.179（角度 18.1°）。
-所以必须加「重力轴与相机 up 夹角 ≤ 60°」的过滤，支撑率只做 tie-breaker。
+所以必须加「重力轴与相机 up 夹角 ≤ 60°」的过滤，支撑率只做 tie-breaker
+（地板候选另有 1.25 倍加成）。
+
+⚠️ 但该闸门只挡得住**明显离谱**的候选，它的余量会被相机俯仰吃掉：
+竖直墙的法向与相机 up 的夹角为 `arccos(cos(roll)·sin(pitch))`，横向不歪时就是 `90° − pitch`。
+**俯仰 30° 时墙恰好落在 60.0° 边界**（代码是 `<= 60`，进不进由浮点与法向噪声决定）；
+俯仰 ≥ 45° 时墙与地板夹角相同，闸门彻底失效。这正是「泛化 RANSAC」分支的来源——
+所以闸门之外还需要一道**可靠性闸门**（见下）。
 
 **2. 平面拟合前要用 offset 直方图隔离单一平面。**
 室内有地板/桌面/柜顶等**同法向但不同高度**的平面，直接拟合会得到 rms 20~30cm 的
@@ -74,6 +83,20 @@ elev3d = asin( (p_base − p_top) · up / ‖p_base − p_top‖ )
 **3. 可见表面质心不能当重心。**
 单目只能看到朝向相机的半边，质心朝相机偏约 `(2/π)R`。实测拟合半径 0.291 m 时
 垂直偏置 0.147 m，与理论 0.185 m 同量级。取轴线中点可消除该偏差。
+
+**4. 只有地板先验胜出时，重力才算「量」出来的。**
+泛化 RANSAC 主方向**无法区分地板与墙**（撑过 60° 闸门的候选仍可能是墙），
+而它的失败**看起来像成功**：平面精修照常跑通（`plane_offset_m` 有值），
+顶层 `confidence` 也不报警（分支中位数 0.226 vs 0.238）——
+即「自信地给错答案」。因此 `estimate_world_frame` 增加一道可靠性闸门：
+非地板先验的候选一律丢弃、退回相机 up，并在响应里标记 `gravity_reliable: false`
+与 `degraded_from`。**安全告警必须在消费 `is_fallen` 前检查该字段。**
+
+> 关于 `confidence` 的补充：上面那个 0.226 vs 0.238 是拿**分支**的中位数在比。
+> 若改成按**同一分支内的对错**拆分，`frame_conf` 反而有区分度且方向相反
+> （判错中位 0.365 vs 判对 0.111，即「越自信越错」），阈值 0.3 可在该分支标出 25 例、
+> 其中 24 例确实是错的。该信号基于弱真值与 n=63，**尚未独立复核，不作为告警依据**，
+> 但它说明「无区分度」这个结论依赖于分组口径，值得单独查证。
 
 ---
 
@@ -147,11 +170,15 @@ curl -X POST localhost:8000/v1/infer -H 'Content-Type: application/json' \
   "ok": true, "task": "geometry", "device": "npu:0", "latency_ms": 1830,
   "result": {
     "fov_x_deg": 65.03,
-    "gravity": {"source": "normal_bottom_band", "camera_tilt_deg": 17.97,
+    "gravity": {"source": "normal_bottom_band",   // 原始候选来源（诊断用）
+                "up_from": "normal_bottom_band",  // up 实际来自哪
+                "gravity_reliable": true,         // false 时 pitch 不可用于告警
+                "camera_tilt_deg": 17.97,
                 "plane_rms_cm": 0.4, "plane_offset_m": -1.887},
     "regions": [{
       "ok": true,
       "pitch_deg": 87.57,          // 直立≈±90, 倒伏≈0
+      "gravity_reliable": true,    // 与该 region 的计算同源，消费前必查
       "center_xyz": [0.42, -0.31, 3.05],
       "center_height_m": 0.79,
       "radius_m": 0.115,
@@ -187,6 +214,27 @@ cd app && python3 ../tests/test_app.py --data /path/to/np_dir
 ModelHub（懒加载/驱逐/flag 派发/并发/降级）、HTTP（含 400/404 错误路径）。
 无需 GPU 与真实权重，用假模型即可。
 
+重力那一层除了真实数据回归，还用**三个确定性合成场景**锁定可靠性闸门的行为：
+命中 `normal_ransac` 必须降级并标记不可靠、命中地板先验必须不降级、
+`camera_fallback` 必须不记 `degraded_from`。这样闸门逻辑在没有数据集时也能防回归。
+
+---
+
+## 🏋️ 训练
+
+`training/` 是**离线**部分：零样本 SAM 生成掩码 → 导出 YOLO-seg 标签 → 训练轻量分割模型。
+服务只加载训好的 `best.pt`，不依赖 SAM（`detect` 任务的 SAM 仅用于离线打标签）。
+逐脚本说明、防泄漏切分规则与复现出的指标见 [`training/README.md`](training/README.md)。
+
+```bash
+cd training
+python batch_masks.py --images IMGDIR --csv instances.csv --out OUT   # 1. 掩码+几何
+python aggregate.py --out OUT --csv instances.csv --geom geometry.csv # 2. 汇总
+python make_dataset.py --out OUT --ds DS                              # 3. 防泄漏切分
+python train_yolo.py --ds DS --model yolo11n-seg.pt --imgsz 1024      # 4. 训练
+python yolo_infer.py --ds DS --weights best.pt --out OUT              # 5. 与 SAM 对比
+```
+
 ---
 
 ## 📦 权重
@@ -203,6 +251,28 @@ ModelHub（懒加载/驱逐/flag 派发/并发/降级）、HTTP（含 400/404 �
 
 ---
 
+## 📊 世界系估计的实测口径
+
+数据集：634 图 / 1315 个可处理实例，其中 **857 个有弱真值**
+（`truth_lying` 由 2D 倾角推出，本身含透视缩短等已知问题）。
+按 `frame_source` 分组的判定准确率：
+
+| `frame_source` | n | 准确率 | 反事实：改用相机 up |
+|---|---|---|---|
+| `normal_bottom_band` | 674 | 97.8% | 97.0% |
+| `camera_fallback` | 120 | 100.0% | 100.0% |
+| **`normal_ransac`** | **63** | **46.0%** ❌ | **95.2%** |
+| 合计 | 857 | 94.3% | 97.3% |
+
+**绝对数字意义有限**（弱真值），但 46.0% vs 95.2% 是同一套弱真值下的相对对比，
+足以支撑「非地板先验一律退回相机 up」这个决定。复现该表需要原始数据集，不在本仓库内；
+`tests/test_app.py` 用三个确定性合成场景锁定了**闸门行为本身**。
+
+> `camera_fallback` 的 100% 有选择偏差：它只在估计器彻底找不到可信平面时触发，
+> 而那类照片往往相机确实端平。它说明的是「该认输时认输」，不是「相机 up 万能」。
+
+---
+
 ## ⚠️ 已知局限
 
 1. **几何中心 ≠ 物理重心。** 物理重心取决于内部质量分布（LPG 液位），
@@ -212,8 +282,12 @@ ModelHub（懒加载/驱逐/flag 派发/并发/降级）、HTTP（含 400/404 �
    需要知道阀门朝向时必须单独检测阀门。
 3. **绝对尺度依赖单目深度模型的先验**，非测量值。
    但朝向角是尺度无关的，不受影响。
-4. **重力估计依赖场景中存在水平面。** 无水平面时会正确回退到相机坐标系，
-   此时「上下」退化为「画面的上下」。
+4. **重力估计依赖场景中存在水平面，且只有地板先验胜出时才可信。**
+   `gravity_reliable: false` 时 up 退化成「假设相机水平」，「上下」即画面的上下：
+   相机俯仰 θ 或横滚 φ 会给 `pitch_deg` 引入 `arccos(cosθ·cosφ)` 的**系统性偏差**
+   （同一姿态下所有瓶子一起错），而判直立/倒伏的阈值只有 30°/45°。
+   实测泛化 RANSAC 分支仅 46.0% 正确（改用相机 up 为 95.2%，见上表）。
+   **消费 `is_fallen` 前必须检查 `gravity_reliable`。**
 5. **昇腾部分未在真机验证过**——详见 [docs/ASCEND.md](docs/ASCEND.md) 的风险表。
 
 ---

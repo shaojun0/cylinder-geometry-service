@@ -4,12 +4,16 @@
 core.py — 与框架无关的纯数值部分（只用 numpy）
 
 包含两块：
-  1) 重力/世界系估计：逐像素法向 -> RANSAC 候选轴 -> 物理硬过滤 -> 平面拟合精修
+  1) 重力/世界系估计：逐像素法向 -> RANSAC 候选轴 -> 物理硬过滤 -> 可靠性闸门
+     -> 平面拟合精修
   2) 圆柱拟合：迭代鲁棒 PCA -> 垂直面圆拟合 -> 轴中点即几何中心
 
 这两块的物理含义与踩坑记录见 docs/ASCEND.md 与仓库根目录的说明。
 关键点：
   * 重力轴必须通过「与相机 up 夹角 <= 60°」的硬过滤，否则会选中面积最大的墙面。
+    但该闸门只挡得住明显离谱的候选：相机俯仰越大，墙面越靠近闸门边界。
+  * 闸门放行的候选仍然可能是墙。只有「地板先验」胜出才认为重力是量出来的，
+    否则退回相机 up 并标记 gravity_reliable=False（见 estimate_world_frame）。
   * 直接对全部法向对齐点做平面拟合会得到 rms 20~30cm 的「混合平面」，
     必须先沿法向做 offset 直方图隔离出单一物理平面。
   * 直接用可见表面质心当重心是有偏的，会朝相机偏约 (2/pi)R；取轴线中点可消除。
@@ -105,16 +109,28 @@ def estimate_world_frame(normal: Optional[np.ndarray], mask: np.ndarray,
                          points: Optional[np.ndarray] = None, seed: int = 0,
                          max_samples: int = 40000, max_axes: int = 5,
                          align_max_deg: float = 60.0, bottom_frac: float = 0.15,
-                         refine: bool = True, plane_rms_max_cm: float = 3.0
+                         refine: bool = True, plane_rms_max_cm: float = 3.0,
+                         require_floor_prior: bool = True
                          ) -> Dict[str, Any]:
     """
     估计重力方向，构造世界系 (right, up, forward)。
 
-    三层：
+    四层：
       1. 迭代 RANSAC 提取若干个主方向（Manhattan 假设），外加「地板在画面下方」先验
       2. 硬过滤：重力轴必须落在相机 up 的 align_max_deg 以内 —— 这一步是关键，
          纯按支撑率选一定会选中面积最大的墙面
-      3. offset 直方图 + 平面拟合精修，并给出 plane_rms 作为置信度
+      3. 可靠性闸门：只有「地板先验」胜出时才认为重力是从场景里**量**出来的；
+         泛化 RANSAC 主方向胜出时一律退回相机 up，并标记 gravity_reliable=False
+         （见下方注释的实测数据）
+      4. offset 直方图 + 平面拟合精修，并给出 plane_rms 作为置信度
+
+    返回的 info 中用四个字段区分「候选从哪来」与「up 实际用了什么」：
+      source            原始候选来源（诊断用，保留全部候选细节）
+      up_from           实际决定 up 的来源
+      gravity_reliable  up 是不是量出来的（只有地板先验算）
+      degraded_from     仅当丢弃了某个候选时出现
+
+    require_floor_prior=False 可关闭第 3 层（仅供实验/对照，服务默认不关）。
     """
     e_up = np.array([0.0, -1.0, 0.0])         # OpenCV 相机系：y 向下
     e_fwd = np.array([0.0, 0.0, 1.0])
@@ -186,6 +202,30 @@ def estimate_world_frame(normal: Optional[np.ndarray], mask: np.ndarray,
             info = {"source": "camera_fallback", "confidence": 0.0,
                     "reason": f"没有候选轴落在相机上方向 {align_max_deg:.0f}° 以内",
                     "n_candidates": len(scored)}
+
+    # ---- 可靠性闸门：泛化 RANSAC 候选不可信，一律退回相机 up ---------------
+    # 实测（857 个有弱真值的实例，frame_source 分组的判定准确率）：
+    #     normal_bottom_band  674 例  97.8%   <- 地板先验，可用
+    #     camera_fallback     120 例 100.0%   <- 本来就假设相机水平
+    #     normal_ransac        63 例  46.0%   <- 泛化 RANSAC，不可用
+    # 同一批 normal_ransac 样本若改用相机 up，准确率 46.0% -> 95.2%。
+    # 根因：泛化 RANSAC 主方向无法区分「地板」与「墙」。align_max_deg 闸门只挡得住
+    # 明显离谱的候选；相机俯仰一大，竖直墙的法向与相机 up 的夹角就是 90°-倾斜角，
+    # 俯仰 30° 时恰好落到 60° 边界上，而墙的支撑率通常是地板的两倍以上（实测
+    # 0.386 vs 0.179），1.25 倍的地板加成也救不回来。
+    # 危险之处在于它**看起来是成功的**：平面精修照常跑通（plane_offset_m 有值），
+    # 顶层 confidence 也不报警（分支中位数 0.226 vs 0.238）。
+    # 注：若改成按同一分支内的对错拆分，frame_conf 反而有区分度且方向相反
+    # （判错 0.365 vs 判对 0.111，即「越自信越错」）—— 该信号尚未独立复核
+    # （弱真值、n=63），**不作为告警依据**，此处只用最保守的处置。
+    # 因此这里不再信任任何非地板先验的候选 —— 宁可退回「假设相机水平」并显式标记。
+    info["gravity_reliable"] = bool(info["source"] == "normal_bottom_band")
+    info["up_from"] = info["source"]
+    if require_floor_prior and not info["gravity_reliable"]:
+        if info["source"] != "camera_fallback":     # camera_fallback 本来就是相机 up
+            info["degraded_from"] = info["source"]
+        info["up_from"] = "camera_up"
+        up = e_up
 
     if refine and points is not None and points.shape[:2] == mask.shape:
         pr = refine_up_with_plane(points, normal, mask, up)

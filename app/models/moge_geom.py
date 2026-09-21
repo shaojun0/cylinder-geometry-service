@@ -9,6 +9,11 @@ moge_geom.py — MoGe-2 单目几何 + 重力世界系 + 圆柱拟合
   2. 对每个区域（框/点/掩码）取三维点做鲁棒圆柱拟合
   3. 输出朝向 pitch、几何中心（轴线中点）、离地高度、半径、长度
 
+⚠️ 每个 region 都带 `gravity_reliable`，与 result["gravity"]["gravity_reliable"] 同源。
+   只有它为 true 时，pitch_deg / is_fallen 才是用从场景中**量**出来的重力算的；
+   为 false 时 up 退化成「假设相机水平」，相机俯仰/横滚会给 pitch 引入同样大小的
+   系统性偏差。**安全告警必须在消费 is_fallen 前检查这个字段。**
+
 注意：几何中心 ≠ 物理重心。物理重心取决于内部质量分布（LPG 液位），视觉不可见。
 """
 from __future__ import annotations
@@ -135,6 +140,7 @@ class MogeGeometry:
         frame = estimate_world_frame(r["normal"], valid, points=pts, seed=0,
                                      refine=refine_gravity)
         up = frame["up"]
+        gravity_reliable = bool(frame["info"].get("gravity_reliable", False))
 
         K = r["intrinsics"]
         fx = float(K[0, 0]) * W if K is not None else float("nan")
@@ -184,6 +190,7 @@ class MogeGeometry:
                 item.update({
                     "ok": True,
                     "pitch_deg": round(pitch_deg(fit["axis"], up), 2),
+                    "gravity_reliable": gravity_reliable,
                     "axis_world": [round(float(v), 5) for v in
                                    np.stack([fit["axis"] @ frame["right"],
                                              fit["axis"] @ up,

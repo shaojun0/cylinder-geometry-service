@@ -53,6 +53,60 @@ def test_core(data_dir: str | None) -> None:
     f2 = estimate_world_frame(n, np.ones((50, 100), bool)[:, :50] & True, points=None)
     check(isinstance(f2["up"], np.ndarray), "纯随机法向不崩")
 
+    # ---- 重力可靠性闸门（回归：泛化 RANSAC 分支必须降级）----------------
+    # 构造三个确定性场景，分别命中三条分支，见 estimate_world_frame 的注释。
+    import math
+
+    def _plane(a_deg, flip=False):
+        """与相机 up 夹角 a_deg 的单位法向（flip 换到另一侧）。"""
+        r = math.radians(a_deg)
+        s = 1.0 if flip else -1.0
+        return np.array([0.0, -math.cos(r), s * math.sin(r)])
+
+    def _scene(top, bottom, split=42, H=50, W=100):
+        N = np.zeros((H, W, 3))
+        N[:split] = top
+        N[split:] = bottom
+        return N, np.ones((H, W), bool)
+
+    A, B = _plane(30), _plane(50, flip=True)      # A 占大部分 -> RANSAC 胜出
+
+    # 场景 1：RANSAC 分支。默认必须丢候选、退回相机 up、标记不可靠
+    N1, M1 = _scene(A, B)
+    fr = estimate_world_frame(N1, M1, points=None, seed=0)
+    i = fr["info"]
+    check(i["source"] == "normal_ransac", f"场景1 命中 normal_ransac (source={i['source']})")
+    check(i["gravity_reliable"] is False, "normal_ransac -> gravity_reliable=False")
+    check(i["up_from"] == "camera_up", f"normal_ransac -> 退回相机 up (up_from={i['up_from']})")
+    check(i.get("degraded_from") == "normal_ransac", "normal_ransac -> 记录 degraded_from")
+    check(abs(i["camera_tilt_deg"]) < 1e-6, "退回后 camera_tilt=0（=假设相机水平）")
+    check(abs(float(fr["up"] @ np.array([0.0, -1.0, 0.0])) - 1.0) < 1e-9,
+          "退回后 up == 相机 up")
+
+    # 逃生舱：关闭闸门应恢复原始行为（30° 的错误估计）
+    fr_off = estimate_world_frame(N1, M1, points=None, seed=0, require_floor_prior=False)
+    io = fr_off["info"]
+    check(io["up_from"] == "normal_ransac" and "degraded_from" not in io,
+          "require_floor_prior=False -> 不降级")
+    check(abs(io["camera_tilt_deg"] - 30.0) < 1.0,
+          f"关闭闸门后 tilt≈30° (实测 {io['camera_tilt_deg']}°)")
+    check(io["gravity_reliable"] is False,
+          "关闭闸门不改变「不可靠」这个事实判断")
+
+    # 场景 2：地板先验胜出 -> 可靠
+    N2, M2 = _scene(A, A)
+    i2 = estimate_world_frame(N2, M2, points=None, seed=0)["info"]
+    check(i2["source"] == "normal_bottom_band" and i2["gravity_reliable"] is True
+          and i2["up_from"] == "normal_bottom_band",
+          f"地板先验 -> 可靠且不降级 (source={i2['source']})")
+
+    # 场景 3：无候选 -> camera_fallback，本就不该记 degraded_from
+    N3, M3 = _scene(_plane(90, flip=True), _plane(90, flip=True))
+    i3 = estimate_world_frame(N3, M3, points=None, seed=0)["info"]
+    check(i3["source"] == "camera_fallback" and i3["gravity_reliable"] is False
+          and i3["up_from"] == "camera_up" and "degraded_from" not in i3,
+          "camera_fallback -> 不可靠但不是降级")
+
     if not data_dir:
         print("  (未提供 --data，跳过真实数据回归)")
         return
@@ -68,6 +122,8 @@ def test_core(data_dir: str | None) -> None:
     check(abs(i["camera_tilt_deg"] - 17.97) < 0.1, f"camera_tilt={i['camera_tilt_deg']} ≈ 17.97")
     check(abs(i.get("plane_rms_cm", 9) - 0.40) < 0.05, f"plane_rms={i.get('plane_rms_cm')} ≈ 0.40")
     check(abs(abs(fr["plane_offset"]) - 1.887) < 0.01, f"相机离地={abs(fr['plane_offset']):.3f} ≈ 1.887")
+    check(i["gravity_reliable"] is True and i["up_from"] == "normal_bottom_band",
+          "Office 走地板先验 -> gravity_reliable=True（闸门不得误伤）")
 
     def med(b):
         return np.median(P[b[1]:b[3], b[0]:b[2]].reshape(-1, 3), axis=0)
