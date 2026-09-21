@@ -107,6 +107,48 @@ def test_core(data_dir: str | None) -> None:
           and i3["up_from"] == "camera_up" and "degraded_from" not in i3,
           "camera_fallback -> 不可靠但不是降级")
 
+    # ---- 权重查找：路径含 "moge" 时不得误选 YOLO 权重 -------------------
+    # 实测踩到过：部署目录 /root/autodl-tmp/moge/weights/ 让 "moge" 出现在**任意
+    # 祖先目录**里，于是该目录下所有 .pt 都成了 MoGe 候选，再按路径长度取最短就
+    # 选中了 yolo-cylinder-seg.pt；MoGe 的 from_pretrained 拿它去 torch.load 后报
+    # `Unsupported global: ultralytics.nn.tasks.SegmentationModel`。
+    import tempfile as _tf
+    from models.moge_geom import _find_moge_weight
+    with _tf.TemporaryDirectory() as td:
+        # 场景 A —— **实测踩到的原始故障**：祖先目录含 moge + 扁平布局。
+        # moge-2-vitl-normal.pt(49) 比 yolo-cylinder-seg.pt(47) 长，旧的
+        # "按路径长度取最短"会选中 YOLO 权重。这一例必须能抓到旧实现。
+        flat = os.path.join(td, "moge", "svc_weights")
+        os.makedirs(flat)
+        open(os.path.join(flat, "moge-2-vitl-normal.pt"), "w").close()
+        open(os.path.join(flat, "yolo-cylinder-seg.pt"), "w").close()
+        got = _find_moge_weight(flat)
+        check(got is not None and "moge-2-vitl-normal.pt" in got,
+              f"祖先目录含 moge + 扁平布局：不误选 YOLO (got={os.path.basename(str(got))})")
+
+        # 场景 B：HF 快照子目录布局（内含 model.pt），同样不能被 YOLO 抢走
+        hf = os.path.join(td, "moge", "hf")
+        os.makedirs(os.path.join(hf, "moge-2-vitl-normal"))
+        os.makedirs(os.path.join(hf, "sam-vit-base"))
+        open(os.path.join(hf, "moge-2-vitl-normal", "model.pt"), "w").close()
+        open(os.path.join(hf, "yolo-cylinder-seg.pt"), "w").close()
+        got2 = _find_moge_weight(hf)
+        check(got2 is not None and got2.endswith(os.path.join("moge-2-vitl-normal", "model.pt")),
+              f"HF 快照布局选对 model.pt (got={os.path.basename(str(got2))})")
+
+        # 场景 C：真实 HF 缓存深层布局 models--*/snapshots/<sha>/model.pt
+        hub = os.path.join(td, "moge", "hub")
+        snap = os.path.join(hub, "models--Ruicheng--moge-2-vitl-normal", "snapshots", "abc123")
+        os.makedirs(snap)
+        open(os.path.join(snap, "model.pt"), "w").close()
+        got3 = _find_moge_weight(hub)
+        check(got3 is not None and got3.endswith("model.pt"),
+              "HF 缓存深层布局仍能找到 model.pt")
+
+        empty = os.path.join(td, "moge", "empty")
+        os.makedirs(empty)
+        check(_find_moge_weight(empty) is None, "无 .pt -> 返回 None")
+
     if not data_dir:
         print("  (未提供 --data，跳过真实数据回归)")
         return

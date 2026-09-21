@@ -68,7 +68,8 @@ class SamSegmenter:
 
         self.torch = torch
         self.device = device
-        local = _find_sam_weight(weights_dir) or os.environ.get("SAM_WEIGHTS")
+        # 显式环境变量优先于启发式查找（理由同 moge_geom._find_moge_weight）
+        local = os.environ.get("SAM_WEIGHTS") or _find_sam_weight(weights_dir)
         src = local if local else repo
         self.source = src
         self.proc = SamProcessor.from_pretrained(src)

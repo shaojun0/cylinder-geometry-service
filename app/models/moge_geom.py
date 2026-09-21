@@ -45,6 +45,8 @@ def _find_moge_weight(weights_dir: str) -> Optional[str]:
       a) 扁平：   weights/moge-2-vitl-normal.pt
       b) HF 缓存：weights/models--Ruicheng--moge-2-vitl-normal/snapshots/<sha>/model.pt
       c) 快照目录：weights/moge-2-vitl-normal/  (内含 model.pt)
+
+    ⚠️ 选择规则见下面 `_rank`：**不能只按路径长度排序**。
     """
     if not weights_dir or not os.path.isdir(weights_dir):
         return None
@@ -63,7 +65,24 @@ def _find_moge_weight(weights_dir: str) -> Optional[str]:
     pool = hinted or generic
     if not pool:
         return None
-    pool.sort(key=lambda p: (os.path.basename(p) != "model.pt", len(p)))
+
+    def _rank(p: str) -> Tuple[int, int, int]:
+        """
+        按**证据强度**排序，最后才用长度兜底。
+
+        坑：`path_hint = "moge" in root` 会匹配**任意祖先目录**。只要权重目录本身
+        位于某个叫 `moge` 的路径下（例如 `/root/autodl-tmp/moge/weights/`，而这是
+        最自然的命名），该目录里**所有** .pt 都会被当成 moge 候选——包括 YOLO 的
+        `best.pt`。此时若按路径长度取最短，就会挑中 YOLO 权重，而 MoGe 的
+        `from_pretrained` 会把它丢给 `torch.load(weights_only=True)`，报出
+        `Unsupported global: ultralytics.nn.tasks.SegmentationModel`。
+        实测踩到过（nmb1 部署）。
+        所以顺序是：文件名里带 moge > HF 约定的 model.pt > 路径最短。
+        """
+        b = os.path.basename(p).lower()
+        return (0 if "moge" in b else 1, 0 if b == "model.pt" else 1, len(p))
+
+    pool.sort(key=_rank)
     return pool[0]
 
 
@@ -82,7 +101,9 @@ class MogeGeometry:
         self.torch = torch
         self.device = device
         self.resolution_level = resolution_level
-        local = _find_moge_weight(weights_dir) or os.environ.get("MOGE_WEIGHTS")
+        # 环境变量是**显式配置**，优先级高于启发式查找——否则运维设了
+        # MOGE_WEIGHTS 也会被"找到了别的 .pt"悄悄盖掉（实测踩到过）。
+        local = os.environ.get("MOGE_WEIGHTS") or _find_moge_weight(weights_dir)
         src = local if local else repo
         self.source = src
         self.model = MoGeModel.from_pretrained(src).to(device).eval()

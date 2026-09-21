@@ -37,7 +37,9 @@ class YoloSegDetector:
         self.policy.apply()
 
         self.device = device
-        w = _find_yolo_weight(weights_dir) or os.environ.get("YOLO_WEIGHTS") or default_weight
+        # 显式环境变量优先于启发式查找（理由同 moge_geom._find_moge_weight）
+        w = (os.environ.get("YOLO_WEIGHTS") or _find_yolo_weight(weights_dir)
+             or default_weight)
         if not w:
             raise FileNotFoundError(
                 f"未找到 YOLO-seg 权重（在 {weights_dir} 下搜 *seg*.pt / best.pt）；"
