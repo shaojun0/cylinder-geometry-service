@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>气瓶几何量测 · 演示台</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2a2f3a;
+    --fg:#e8eaed; --dim:#9aa3af; --accent:#4c8dff;
+    --ok:#1fbf6b; --warn:#ffb020; --bad:#ff4d4f; --idle:#6b7280;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--fg); font-size:14px; line-height:1.55;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  }
+  a{color:var(--accent)}
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+  header{padding:18px 22px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#191d26,#12151b)}
+  header h1{margin:0;font-size:19px;font-weight:650;letter-spacing:.3px}
+  header p{margin:5px 0 0;color:var(--dim);font-size:12.5px}
+  .wrap{padding:16px 22px 60px;max-width:1560px;margin:0 auto}
+  .grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:16px}
+  @media (max-width:1080px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:16px;overflow:hidden}
+  .card h2{margin:0;padding:11px 14px;font-size:13.5px;font-weight:600;border-bottom:1px solid var(--line);background:var(--panel2);display:flex;align-items:center;gap:8px;justify-content:space-between}
+  .card .body{padding:14px}
+  /* ---- drop zone ---- */
+  #drop{
+    border:2px dashed #39404d;border-radius:10px;padding:22px;text-align:center;color:var(--dim);
+    cursor:pointer;transition:.15s;background:#14171d
+  }
+  #drop:hover,#drop.hot{border-color:var(--accent);color:var(--fg);background:#161b26}
+  #drop b{color:var(--fg)}
+  .btnrow{display:flex;gap:10px;flex-wrap:wrap;margin-top:13px}
+  button{
+    font:inherit;font-size:13.5px;padding:9px 16px;border-radius:8px;border:1px solid var(--line);
+    background:#232833;color:var(--fg);cursor:pointer;transition:.15s
+  }
+  button:hover:not(:disabled){background:#2c3340;border-color:#3b4351}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button.primary:hover:not(:disabled){background:#3d7ef0}
+  button.ghost{background:transparent}
+  .meta{color:var(--dim);font-size:12px;margin-top:10px}
+  /* ---- progress ---- */
+  #progress{display:none;margin-top:13px;background:#12161e;border:1px solid var(--line);border-radius:9px;padding:11px 13px}
+  #progress.on{display:block}
+  .spin{display:inline-block;width:13px;height:13px;border:2px solid #3a4150;border-top-color:var(--accent);border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px;margin-right:7px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  #stepText{font-weight:600}
+  #elapsed{color:var(--warn);font-variant-numeric:tabular-nums}
+  .hint{color:var(--dim);font-size:12px;margin-top:5px}
+  /* ---- canvas ---- */
+  #stage{position:relative;background:#0b0d11;border-radius:9px;overflow:hidden;display:flex;align-items:center;justify-content:center;min-height:180px}
+  #stage.empty::after{content:"尚未选择图片";color:#5b6472;font-size:13px}
+  #canvas{max-width:100%;max-height:70vh;display:block}
+  #canvas.hide{display:none}
+  #empty{color:#5b6472;font-size:13px;padding:40px 0}
+  /* ---- banner ---- */
+  .banner{border-radius:11px;padding:14px 16px;margin-bottom:16px;border:1px solid;display:none}
+  .banner.on{display:block}
+  .banner .bt{font-size:15.5px;font-weight:750;display:flex;align-items:center;gap:9px;margin-bottom:7px}
+  .banner .bd{font-size:13px;line-height:1.7}
+  .banner .bd b{color:#fff}
+  #warnBanner{background:linear-gradient(180deg,#3a1213,#2a0e0f);border-color:#8b2b2e;color:#ffd9d9}
+  #warnBanner .bt{color:#ff8a8d}
+  #errBox{background:linear-gradient(180deg,#3a2312,#2a1a0f);border-color:#8b5a2b;color:#ffe6c7}
+  #errBox .bt{color:#ffb020}
+  #okBanner{background:linear-gradient(180deg,#0f2e1e,#0b2116);border-color:#1f6b45;color:#c9f5dd}
+  #okBanner .bt{color:#4fe08d}
+  /* ---- gravity panel ---- */
+  .gbig{display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:10px;border:1px solid var(--line);background:#12161e;margin-bottom:12px}
+  .gbig .lbl{font-size:12px;color:var(--dim);letter-spacing:.4px;text-transform:uppercase}
+  .gbig .val{font-size:17px;font-weight:750}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:700;border:1px solid}
+  .pill.true{background:rgba(31,191,107,.15);color:#4fe08d;border-color:#1f6b45}
+  .pill.false{background:rgba(255,77,79,.18);color:#ff8a8d;border-color:#8b2b2e}
+  .pill.na{background:rgba(107,114,128,.2);color:#c3c9d4;border-color:#4b5563}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;font-size:13px}
+  .kv dt{color:var(--dim);white-space:nowrap}
+  .kv dd{margin:0;font-weight:600;word-break:break-all}
+  /* ---- table ---- */
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:8px 9px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{color:var(--dim);font-weight:600;font-size:12px;background:#1b1f27;position:sticky;top:0}
+  th:first-child,td:first-child{text-align:center}
+  th:nth-child(3),td:nth-child(3){text-align:center}
+  th:nth-child(4),td:nth-child(4){text-align:center}
+  tbody tr:hover{background:#1c212b}
+  tbody tr.bad td{background:rgba(255,77,79,.06)}
+  .tag{display:inline-block;padding:1px 9px;border-radius:999px;font-size:12px;font-weight:700;border:1px solid}
+  .tag.fallen{background:rgba(255,77,79,.16);color:#ff8a8d;border-color:#8b2b2e}
+  .tag.upright{background:rgba(31,191,107,.15);color:#4fe08d;border-color:#1f6b45}
+  .tag.unknown{background:rgba(107,114,128,.2);color:#c3c9d4;border-color:#4b5563}
+  .idxchip{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;border-radius:6px;background:#2b3240;font-weight:700;font-size:12px;border:1px solid #3b4351}
+  .scroll{max-height:460px;overflow:auto}
+  .sec-title{margin:22px 0 10px;font-size:14px;font-weight:650;color:#cfd5de;border-left:3px solid var(--accent);padding-left:9px}
+  details.raw{margin-top:12px}
+  details.raw summary{cursor:pointer;color:var(--dim);font-size:12.5px}
+  details.raw pre{background:#0d1015;border:1px solid var(--line);border-radius:8px;padding:11px;overflow:auto;max-height:320px;font-size:11.5px;color:#b9c1cd}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--dim);margin-top:9px}
+  .legend i{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:-1px;margin-right:5px}
+  footer{color:#5b6472;font-size:12px;padding:0 22px 30px;max-width:1560px;margin:0 auto}
+</style>
+</head>
+<body>
+<header>
+  <h1>气瓶几何量测 · 演示台</h1>
+  <p>MoGe-2 单目重建 + 重力世界系 + 圆柱拟合 ｜ YOLO-seg 检测 ｜ 直立 ≈ ±90°，倒伏 ≈ 0° ｜ 判据：<span class="mono">|pitch| &lt; 45° ⇒ is_fallen</span></p>
+</header>
+
+<div class="wrap">
+
+  <!-- ================= 安全横幅（最显眼位置） ================= -->
+  <div id="warnBanner" class="banner">
+    <div class="bt">⚠️ 重力不可靠 gravity_reliable = false —— 本结果的 <span class="mono">is_fallen</span> 禁止用于安全告警</div>
+    <div class="bd">
+      本次重力方向<b>不是从场景里量出来的</b>：候选分支 <span class="mono" id="wbSource">-</span>
+      已被可靠性闸门丢弃（<span class="mono">degraded_from</span>），<span class="mono">up_from</span> 退化为
+      <b>「假设相机水平」</b>（相机 up）。<br>
+      此时若现场相机存在<b>俯仰或横滚</b>，会给 <span class="mono">pitch_deg</span> 引入<b>同样大小的系统性偏差</b>，
+      直立/倒伏可能在整张图上被整体判反，且<b>看起来完全正常</b>（平面精修照样有输出）。
+      <b>请勿据此发出倒伏告警</b>，本结果仅可用于几何量测演示。<br>
+      建议：让相机拍到画面下方的地面（地板先验 <span class="mono">normal_bottom_band</span> 是唯一被采信的分支），
+      并保持相机水平，再重新量测。
+    </div>
+  </div>
+
+  <div id="errBox" class="banner">
+    <div class="bt">✖ 请求失败</div>
+    <div class="bd"><span id="errMsg">-</span></div>
+  </div>
+
+  <div id="okBanner" class="banner">
+    <div class="bt">✔ 重力可靠 gravity_reliable = true（来源：地板先验）</div>
+    <div class="bd">up 由场景地板实际量出，<span class="mono">pitch_deg</span> 可直接用于直立/倒伏判定。</div>
+  </div>
+
+  <div class="grid">
+    <!-- ================= 左列：输入 + 画面 ================= -->
+    <div>
+      <div class="card">
+        <h2>1 · 选择图片</h2>
+        <div class="body">
+          <div id="drop">
+            <b>点击选择</b> 或把图片拖到这里<br>
+            <span style="font-size:12px">支持拖拽整张图片文件 · 浏览器端会先缩放到最长边 ≤ 1600px 并转 JPEG(q0.9) 再上传</span>
+          </div>
+          <input id="file" type="file" accept="image/*" hidden>
+          <div class="meta" id="imgMeta">未选择图片</div>
+          <div class="btnrow">
+            <button id="btnRun" class="primary" disabled>检测 + 量测</button>
+            <button id="btnGrav" class="ghost" disabled>只估重力（不选区域）</button>
+            <button id="btnUnload" class="ghost" title="释放远程显存中驻留的模型">卸载远程模型</button>
+          </div>
+          <div id="progress">
+            <div><span class="spin"></span><span id="stepText">准备中…</span> <span id="elapsed">0.0s</span></div>
+            <div class="hint">切换模型需要重新加载（远程同时只驻留一个模型），首次加载 MoGe 可能需要十几秒到几十秒，请耐心等待，不要刷新页面。</div>
+          </div>
+          <div class="hint" id="servedNote"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>2 · 叠加显示 <span style="font-weight:400;color:var(--dim);font-size:12px" id="stageNote"></span></h2>
+        <div class="body">
+          <div id="stage" class="empty">
+            <div id="empty">尚未选择图片</div>
+            <canvas id="canvas" class="hide"></canvas>
+          </div>
+          <div class="legend">
+            <span><i style="background:#ff4d4f"></i>倒伏 is_fallen=true</span>
+            <span><i style="background:#1fbf6b"></i>直立 is_fallen=false</span>
+            <span><i style="background:#8892a4"></i>未量测 / 拟合失败</span>
+            <span>框内序号 ↔ 下表序号</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 右列：重力 + 表格 ================= -->
+    <div>
+      <div class="card">
+        <h2>3 · 重力世界系（安全判据）</h2>
+        <div class="body">
+          <div class="gbig">
+            <div style="flex:1">
+              <div class="lbl">gravity_reliable</div>
+              <div class="val" id="gRel">—</div>
+            </div>
+            <div style="text-align:right">
+              <div class="lbl">up_from</div>
+              <div class="val mono" id="gUpFrom" style="font-size:14px">—</div>
+            </div>
+          </div>
+          <dl class="kv">
+            <dt>source（原始候选来源）</dt><dd class="mono" id="gSource">—</dd>
+            <dt>degraded_from（被丢弃的候选）</dt><dd class="mono" id="gDeg">—</dd>
+            <dt>camera_tilt_deg（估计出的相机倾斜）</dt><dd class="mono" id="gTilt">—</dd>
+            <dt>plane_rms_cm（平面拟合残差）</dt><dd class="mono" id="gRms">—</dd>
+            <dt>confidence（候选支撑率）</dt><dd class="mono" id="gConf">—</dd>
+            <dt>plane_offset_m（相机离地）</dt><dd class="mono" id="gOff">—</dd>
+            <dt>refined_by / 其他</dt><dd class="mono" id="gMisc">—</dd>
+          </dl>
+          <div class="hint" style="margin-top:11px">
+            只有 <span class="mono">normal_bottom_band</span>（地板先验）会被判定为可靠。
+            <span class="mono">normal_ransac</span> 分支实测判定准确率仅 46%，服务已强制退回相机 up 并标记不可靠。
+            消费 <span class="mono">is_fallen</span> 之前<b>必须先看这一栏</b>。
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>4 · 量测结果 <span style="font-weight:400;color:var(--dim);font-size:12px" id="tblNote"></span></h2>
+        <div class="body">
+          <div class="scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th><th>pitch_deg</th><th>is_fallen</th><th>gravity_reliable</th>
+                  <th>radius_m</th><th>length_m</th><th>center_height_m</th>
+                </tr>
+              </thead>
+              <tbody id="tbody">
+                <tr><td colspan="7" style="text-align:center;color:var(--dim);padding:18px">尚无结果</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <details class="raw">
+            <summary>查看原始返回 JSON（gravity / regions 全文）</summary>
+            <pre id="raw">—</pre>
+          </details>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  本页面为单文件、无外部依赖。坐标说明：检测框与多边形均为上传图（已缩放到最长边 ≤1600px）的像素坐标，可直接用于叠加显示。
+  远程同一时刻只驻留一个模型：detect → geometry 切换会触发重新加载，属正常现象。
+</footer>
+
+<script>
+"use strict";
+(function(){
+  /* ---------------------------------------------------------- 元素 */
+  var $ = function(id){ return document.getElementById(id); };
+  var drop=$("drop"), fileInput=$("file"), canvas=$("canvas"), empty=$("empty"), stage=$("stage");
+  var btnRun=$("btnRun"), btnGrav=$("btnGrav"), btnUnload=$("btnUnload");
+  var progress=$("progress"), stepText=$("stepText"), elapsed=$("elapsed");
+  var imgMeta=$("imgMeta"), stageNote=$("stageNote"), tblNote=$("tblNote"), servedNote=$("servedNote");
+  var warnBanner=$("warnBanner"), errBox=$("errBox"), okBanner=$("okBanner");
+  var ctx = canvas.getContext("2d");
+
+  /* ---------------------------------------------------------- 状态 */
+  var MAX_SIDE = 1600, JPEG_Q = 0.9;
+  var imgEl = null;            // 已加载的 上传图 元素
+  var dataUrl = null;          // 上传用 JPEG dataURL
+  var sentW = 0, sentH = 0;    // 上传图尺寸（= 后端返回坐标所在空间）
+  var origW = 0, origH = 0;
+  var detections = [];         // detect 结果
+  var regions = [];            // geometry 结果
+  var gravity = null;          // geometry 的 gravity 字段
+  var busy = false, timerId = null, t0 = 0;
+
+  /* ---------------------------------------------------------- 工具 */
+  function fmt(v, suffix, digits){
+    if(v === null || v === undefined || v === "" || Number.isNaN(v)) return "—";
+    var s = (typeof v === "number" && digits !== undefined) ? v.toFixed(digits) : String(v);
+    return suffix ? s + " " + suffix : s;
+  }
+  function esc(s){
+    return String(s).replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  }
+  function show(el){ el.classList.add("on"); }
+  function hide(el){ el.classList.remove("on"); }
+
+  function setBusy(on, step){
+    busy = on;
+    btnRun.disabled = on || !dataUrl;
+    btnGrav.disabled = on || !dataUrl;
+    btnUnload.disabled = on;
+    if(on){
+      progress.classList.add("on");
+      stepText.textContent = step || "处理中…";
+      t0 = Date.now();
+      if(timerId) clearInterval(timerId);
+      timerId = setInterval(function(){
+        elapsed.textContent = ((Date.now()-t0)/1000).toFixed(1) + "s";
+      }, 100);
+    }else{
+      progress.classList.remove("on");
+      if(timerId){ clearInterval(timerId); timerId=null; }
+    }
+  }
+  function setStep(s){ stepText.textContent = s; }
+  function showError(msg){
+    $("errMsg").innerHTML = esc(msg);
+    show(errBox);
+  }
+  function clearBanners(){ hide(errBox); hide(warnBanner); hide(okBanner); }
+
+  /* ---------------------------------------------------------- 1. 选图 + 缩放 */
+  function handleFiles(files){
+    if(!files || !files.length) return;
+    var f = files[0];
+    if(!/^image\//.test(f.type)){ showError("不是图片文件：" + f.name); return; }
+    var url = URL.createObjectURL(f);
+    var im = new Image();
+    im.onload = function(){
+      origW = im.naturalWidth; origH = im.naturalHeight;
+      var longSide = Math.max(origW, origH);
+      var sc = longSide > MAX_SIDE ? (MAX_SIDE / longSide) : 1;
+      sentW = Math.max(1, Math.round(origW * sc));
+      sentH = Math.max(1, Math.round(origH * sc));
+
+      var c = document.createElement("canvas");
+      c.width = sentW; c.height = sentH;
+      c.getContext("2d").drawImage(im, 0, 0, sentW, sentH);
+      dataUrl = c.toDataURL("image/jpeg", JPEG_Q);
+
+      var im2 = new Image();
+      im2.onload = function(){
+        imgEl = im2;
+        detections = []; regions = []; gravity = null;
+        renderGravity(null); renderTable(null);
+        resetCanvas();
+        clearBanners();
+        var bytes = Math.round(dataUrl.length * 3 / 4);
+        imgMeta.innerHTML = "已加载 <b>" + esc(f.name) + "</b> ｜ 原图 " + origW + "×" + origH +
+          " → 上传 " + sentW + "×" + sentH + "（JPEG q" + JPEG_Q + "，约 " +
+          (bytes/1024/1024).toFixed(2) + " MB）";
+        servedNote.textContent = "";
+        btnRun.disabled = false; btnGrav.disabled = false;
+        URL.revokeObjectURL(url);
+      };
+      im2.src = dataUrl;
+    };
+    im.onerror = function(){ showError("图片解码失败：" + f.name); URL.revokeObjectURL(url); };
+    im.src = url;
+  }
+
+  drop.addEventListener("click", function(){ fileInput.click(); });
+  fileInput.addEventListener("change", function(){ handleFiles(fileInput.files); });
+  ["dragenter","dragover"].forEach(function(ev){
+    drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.add("hot"); });
+  });
+  ["dragleave","drop"].forEach(function(ev){
+    drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.remove("hot"); });
+  });
+  drop.addEventListener("drop", function(e){
+    if(e.dataTransfer && e.dataTransfer.files) handleFiles(e.dataTransfer.files);
+  });
+  // 整页拖拽也接住，避免浏览器直接打开图片
+  window.addEventListener("dragover", function(e){ e.preventDefault(); });
+  window.addEventListener("drop", function(e){
+    e.preventDefault();
+    if(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+  });
+
+  /* ---------------------------------------------------------- 2. 调接口 */
+  async function infer(payload){
+    var resp;
+    try{
+      resp = await fetch("/v1/infer", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify(payload)
+      });
+    }catch(netErr){
+      return {ok:false, error:"网络错误：无法连接服务（" + (netErr && netErr.message) + "）"};
+    }
+    var txt = await resp.text(), js = null;
+    try{ js = JSON.parse(txt); }catch(e){ js = null; }
+    if(js === null){
+      return {ok:false, error:"服务返回非 JSON（HTTP " + resp.status + "）：" + txt.slice(0,300)};
+    }
+    if(!js.ok && !js.error) js.error = "HTTP " + resp.status + " 返回 ok=false";
+    js._http = resp.status;
+    return js;
+  }
+
+  function describeError(js){
+    var e = String(js.error || "未知错误");
+    if(e.indexOf("weights_missing") === 0){
+      return "远程权重缺失：" + e.replace(/^weights_missing:\s*/, "") +
+             "\n（请检查远程 WEIGHTS_DIR / MOGE_WEIGHTS / SAM_WEIGHTS / YOLO_WEIGHTS 配置）";
+    }
+    return e + (js._http ? "（HTTP " + js._http + "）" : "");
+  }
+
+  function pushRaw(label, obj){
+    var el = $("raw");
+    el.textContent = "// " + label + " @ " + new Date().toLocaleTimeString() + "\n" +
+      JSON.stringify(obj, null, 2);
+  }
+
+  /* ---------------------------------------------------------- 3. 主流程 */
+  async function runDetectAndGeometry(){
+    if(busy || !dataUrl) return;
+    clearBanners();
+    detections = []; regions = []; gravity = null;
+    renderGravity(null); renderTable(null);
+    setBusy(true, "① 检测中：正在上传并运行 YOLO-seg…");
+    resetCanvas();
+
+    var d = await infer({task:"detect", image_b64:dataUrl, return_polygons:true});
+    if(!d.ok){
+      setBusy(false);
+      showError("detect 失败：" + describeError(d));
+      pushRaw("detect 失败", d);
+      return;
+    }
+    detections = (d.result && d.result.detections) || [];
+    pushRaw("detect", d);
+    draw();
+    stageNote.textContent = "检测到 " + detections.length + " 个目标" +
+      (typeof d.latency_ms === "number" ? "（" + (d.latency_ms/1000).toFixed(1) + "s）" : "");
+    if(!detections.length){
+      setBusy(false);
+      showError("未检测到气瓶（可降低 conf 阈值，或换一张图）。detect 返回 0 个检测框。");
+      return;
+    }
+
+    var boxes = detections.map(function(x){ return x.box; });
+    setStep("② 量测中：正在切换 / 加载 MoGe-2 并对 " + boxes.length +
+            " 个区域做圆柱拟合…（首次加载需十几秒到几十秒）");
+    var g = await infer({task:"geometry", image_b64:dataUrl,
+                         regions: boxes.map(function(b){ return {box:b}; })});
+    if(!g.ok){
+      setBusy(false);
+      showError("geometry 失败：" + describeError(g));
+      pushRaw("geometry 失败", g);
+      return;
+    }
+    regions = (g.result && g.result.regions) || [];
+    gravity = (g.result && g.result.gravity) || null;
+    pushRaw("geometry", g);
+    renderGravity(gravity);
+    renderTable(regions);
+    draw();
+    setBusy(false);
+    tblNote.textContent = regions.length + " 个区域" +
+      (typeof g.latency_ms === "number" ? "（" + (g.latency_ms/1000).toFixed(1) + "s）" : "");
+  }
+
+  async function runGravityOnly(){
+    if(busy || !dataUrl) return;
+    clearBanners();
+    detections = []; regions = []; gravity = null;
+    renderGravity(null); renderTable(null); resetCanvas();
+    setBusy(true, "正在估计重力（不选区域）：切换 / 加载 MoGe-2…（首次需十几秒到几十秒）");
+    var g = await infer({task:"geometry", image_b64:dataUrl, regions:[]});
+    if(!g.ok){
+      setBusy(false);
+      showError("geometry 失败：" + describeError(g));
+      pushRaw("geometry 失败", g);
+      return;
+    }
+    gravity = (g.result && g.result.gravity) || null;
+    pushRaw("geometry(regions=[])", g);
+    renderGravity(gravity);
+    renderTable([]);
+    draw();
+    setBusy(false);
+    tblNote.textContent = "仅重力（未选区域）";
+  }
+
+  btnRun.addEventListener("click", runDetectAndGeometry);
+  btnGrav.addEventListener("click", runGravityOnly);
+  btnUnload.addEventListener("click", async function(){
+    if(busy) return;
+    btnUnload.disabled = true;
+    try{
+      var r = await fetch("/v1/unload", {method:"POST"});
+      var j = await r.json();
+      pushRaw("unload", j);
+      servedNote.textContent = "已请求卸载远程模型：" + JSON.stringify(j.unloaded || j);
+    }catch(e){
+      showError("卸载失败：" + e.message);
+    }
+    btnUnload.disabled = false;
+  });
+
+  /* ---------------------------------------------------------- 4. 重力面板 */
+  function renderGravity(g){
+    if(!g){
+      $("gRel").innerHTML = '<span class="pill na">—</span>';
+      $("gUpFrom").textContent = "—";
+      ["gSource","gDeg","gTilt","gRms","gConf","gOff","gMisc"].forEach(function(id){ $(id).textContent="—"; });
+      return;
+    }
+    var rel = g.gravity_reliable === true;
+    $("gRel").innerHTML = rel
+      ? '<span class="pill true">true · 可靠</span>'
+      : '<span class="pill false">false · 不可靠</span>';
+    $("gUpFrom").textContent = fmt(g.up_from);
+    $("gSource").textContent = fmt(g.source);
+    $("gDeg").textContent = fmt(g.degraded_from, null, undefined);
+    if(g.degraded_from === undefined) $("gDeg").textContent = "—（无候选被丢弃）";
+    $("gTilt").textContent = fmt(g.camera_tilt_deg, "°");
+    $("gRms").textContent = fmt(g.plane_rms_cm, "cm");
+    $("gConf").textContent = fmt(g.confidence);
+    $("gOff").textContent = fmt(g.plane_offset_m, "m");
+    var misc = [];
+    if(g.refined_by) misc.push("refined_by=" + g.refined_by);
+    if(g.plane_inliers !== undefined) misc.push("plane_inliers=" + g.plane_inliers);
+    if(g.angle_to_camera_up_deg !== undefined) misc.push("angle_to_camera_up=" + g.angle_to_camera_up_deg + "°");
+    if(g.n_candidates !== undefined) misc.push("n_candidates=" + g.n_candidates);
+    if(g.reason) misc.push("reason=" + g.reason);
+    $("gMisc").textContent = misc.length ? misc.join("  ｜  ") : "—";
+
+    // ---- 可靠性横幅：页面重点 ----
+    if(rel){
+      show(okBanner);
+    }else{
+      $("wbSource").textContent = fmt(g.source) +
+        (g.degraded_from ? "（已丢弃，原候选 " + g.degraded_from + "）" : "");
+      show(warnBanner);
+    }
+  }
+
+  /* ---------------------------------------------------------- 5. 表格 */
+  function pitchTag(reg){
+    if(!reg || reg.ok === false || reg.pitch_deg === undefined || reg.pitch_deg === null)
+      return '<span class="tag unknown">—</span>';
+    return reg.is_fallen
+      ? '<span class="tag fallen">倒伏</span>'
+      : '<span class="tag upright">直立</span>';
+  }
+  function relTag(v){
+    if(v === true)  return '<span class="pill true">true</span>';
+    if(v === false) return '<span class="pill false">false</span>';
+    return '<span class="pill na">—</span>';
+  }
+  function renderTable(regs){
+    var tb = $("tbody");
+    if(regs === null){
+      tb.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--dim);padding:18px">尚无结果</td></tr>';
+      return;
+    }
+    if(!regs.length){
+      tb.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--dim);padding:18px">本次只估计重力，未量测区域</td></tr>';
+      return;
+    }
+    var rows = regs.map(function(r){
+      var failed = (r.ok === false);
+      var cls = failed ? ' class="bad"' : (r.is_fallen ? ' class="bad"' : '');
+      var cell = failed
+        ? '<td colspan="6" style="text-align:left;color:#ff8a8d">拟合失败：' + esc(r.error || "未知原因") + '</td>'
+        : '<td class="mono">' + fmt(r.pitch_deg, "°") + '</td>' +
+          '<td>' + pitchTag(r) + '</td>' +
+          '<td>' + relTag(r.gravity_reliable) + '</td>' +
+          '<td class="mono">' + fmt(r.radius_m, null, 4) + '</td>' +
+          '<td class="mono">' + fmt(r.length_m, null, 4) + '</td>' +
+          '<td class="mono">' + fmt(r.center_height_m, null, 4) + '</td>';
+      return '<tr' + cls + '><td><span class="idxchip">' + (r.index !== undefined ? r.index : "?") + '</span></td>' + cell + '</tr>';
+    });
+    tb.innerHTML = rows.join("");
+  }
+
+  /* ---------------------------------------------------------- 6. Canvas 叠加 */
+  function resetCanvas(){
+    if(!imgEl){ canvas.classList.add("hide"); empty.style.display="block"; stage.classList.add("empty"); return; }
+    empty.style.display = "none"; stage.classList.remove("empty");
+    canvas.classList.remove("hide");
+    canvas.width = sentW; canvas.height = sentH;
+    ctx.clearRect(0,0,sentW,sentH);
+    ctx.drawImage(imgEl, 0, 0, sentW, sentH);
+    stageNote.textContent = "";
+  }
+  function colorFor(reg){
+    if(!reg || reg.ok === false) return "#8892a4";
+    return reg.is_fallen ? "#ff4d4f" : "#1fbf6b";
+  }
+  function normalizePolys(polys){
+    // detect 返回 [[x,y],...]（单多边形）；segment 返回 [[[x,y],...],...]（多边形数组）
+    if(!polys || !polys.length) return [];
+    if(typeof polys[0][0] === "number") return [polys];
+    return polys;
+  }
+  function draw(){
+    if(!imgEl) return;
+    resetCanvas();
+    var byIdx = {};
+    regions.forEach(function(r){ byIdx[r.index] = r; });
+    var lw = Math.max(2, Math.round(sentW / 500));
+
+    detections.forEach(function(d, i){
+      var reg = byIdx[i];
+      var col = colorFor(reg);
+      // 多边形填充
+      var polys = normalizePolys(d.polygons);
+      polys.forEach(function(p){
+        if(!p || p.length < 3) return;
+        ctx.beginPath();
+        ctx.moveTo(p[0][0], p[0][1]);
+        for(var k=1;k<p.length;k++) ctx.lineTo(p[k][0], p[k][1]);
+        ctx.closePath();
+        ctx.fillStyle = col + "2e";        // 半透明填充
+        ctx.fill();
+        ctx.strokeStyle = col;
+        ctx.lineWidth = Math.max(1, lw-1);
+        ctx.stroke();
+      });
+      // 检测框
+      var b = d.box || [0,0,0,0];
+      ctx.strokeStyle = col;
+      ctx.lineWidth = lw;
+      ctx.setLineDash([]);
+      ctx.strokeRect(b[0], b[1], b[2]-b[0], b[3]-b[1]);
+
+      // 序号徽标
+      var label = String(d.index !== undefined ? d.index : i);
+      ctx.font = "bold " + Math.max(13, Math.round(sentW/70)) + "px ui-monospace,Menlo,Consolas,monospace";
+      var tw = ctx.measureText(label).width;
+      var pad = Math.round(sentW/300) + 4;
+      var bh = Math.max(18, Math.round(sentW/60));
+      var bx = b[0], by = Math.max(0, b[1] - bh);
+      ctx.fillStyle = col;
+      ctx.fillRect(bx, by, tw + pad*2, bh);
+      ctx.fillStyle = "#0b0d11";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, bx + pad, by + bh/2 + 1);
+    });
+
+    // 无检测但已估重力时，给个提示
+    if(!detections.length && gravity){
+      ctx.font = "bold " + Math.max(14, Math.round(sentW/60)) + "px sans-serif";
+      ctx.fillStyle = "rgba(0,0,0,.55)";
+      var txt = "仅重力估计：up_from=" + fmt(gravity.up_from) +
+                " / gravity_reliable=" + fmt(gravity.gravity_reliable);
+      var w = ctx.measureText(txt).width + 24;
+      ctx.fillRect(0, 0, w, 34);
+      ctx.fillStyle = gravity.gravity_reliable ? "#4fe08d" : "#ff8a8d";
+      ctx.textBaseline = "middle";
+      ctx.fillText(txt, 12, 18);
+    }
+  }
+
+  /* ---------------------------------------------------------- 7. 启动自检 */
+  (async function boot(){
+    try{
+      var r = await fetch("/v1/tasks");
+      var j = await r.json();
+      if(j && j.ok){
+        var t = j.tasks || {};
+        var miss = Object.keys(t).filter(function(k){ return !t[k].weights_found; });
+        var dev = j.device || "?";
+        servedNote.textContent = "服务在线 ｜ device=" + dev + " ｜ 任务权重：" +
+          Object.keys(t).map(function(k){ return k + (t[k].weights_found ? "✔" : "✘"); }).join(" ") +
+          (miss.length ? " ｜ ⚠ 缺失：" + miss.join(",") : "");
+        if(miss.length){
+          showError("远程权重未就绪：任务 " + miss.join(", ") +
+            " 的 weights_found=false。请检查远程 svc_weights/ 与 WEIGHTS_DIR。");
+        }
+      }
+    }catch(e){
+      servedNote.textContent = "无法连接 /v1/tasks（" + e.message + "）";
+    }
+  })();
+})();
+</script>
+</body>
+</html>

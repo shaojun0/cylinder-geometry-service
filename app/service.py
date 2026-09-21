@@ -25,6 +25,7 @@ from typing import Any, Dict
 
 from fastapi import Body, FastAPI, Query
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from model_hub import get_hub
 
@@ -128,6 +129,39 @@ def infer(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
 def unload(task: str = Query(default="", description="留空则卸载全部")) -> Dict[str, Any]:
     hub = get_hub()
     return {"ok": True, **hub.unload(task or None)}
+
+
+# ---------------------------------------------------------------- 前端静态页
+# 单文件前端（web/index.html）与 API 同源托管，方便直接用浏览器测试。
+# 必须**最后**挂载到 "/"：Starlette 按注册顺序匹配，先注册的
+# /healthz、/v1/tasks、/v1/infer、/v1/unload（以及 /docs、/openapi.json）
+# 优先命中，静态目录只兜底其余路径。
+_WEB_DIR_CANDIDATES = (
+    # 1) 仓库布局： <repo>/web/   （service.py 在 <repo>/app/ 下）
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web"),
+    # 2) 容器布局： /web/         （Dockerfile 把 web/ 拷到 /app 旁边）
+    os.path.join(os.sep, "web"),
+    # 3) 退化布局： <app>/web/
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "web"),
+)
+
+
+def find_web_dir() -> "str | None":
+    """返回第一个含 index.html 的候选目录；都找不到返回 None。"""
+    for d in _WEB_DIR_CANDIDATES:
+        if os.path.isfile(os.path.join(d, "index.html")):
+            return d
+    return None
+
+
+_web_dir = find_web_dir()
+if _web_dir:
+    app.mount("/", StaticFiles(directory=_web_dir, html=True), name="web")
+    log.info("前端已挂载: %s -> /", _web_dir)
+else:
+    # 降级而非崩溃：前端只是可选的人机界面，缺了不能影响 API。
+    log.warning("未找到 web/index.html（候选 %s），跳过前端挂载；"
+                "API 端点不受影响", list(_WEB_DIR_CANDIDATES))
 
 
 if __name__ == "__main__":

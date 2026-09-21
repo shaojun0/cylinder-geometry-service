@@ -60,3 +60,9 @@ venv/
 SPEC.md
 scripts/
 docker-compose*.yml
+
+# ---- 必须进上下文：前端静态页 ----------------------------------------------
+# web/ 是单文件前端，Dockerfile 里 `COPY web/ /web/`；此处显式声明不排除，
+# 防止将来加入通配排除规则时把它误伤（前端缺失时服务只会降级，但页面就没了）。
+!web/
+!web/index.html

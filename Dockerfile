@@ -92,6 +92,10 @@ RUN set -eu; \
 # （.dockerignore 已排除 __pycache__ / *.pyc，不会把宿主机的 .pyc 带进来）
 COPY app/ /app/
 
+# 单文件前端：按 service.py 的探测约定，容器里放在 /app 旁边的 /web。
+# 由 StaticFiles 挂在 "/"（注册在全部 API 路由之后），与 API 同源托管。
+COPY web/ /web/
+
 RUN mkdir -p /app/weights
 
 # 结构冒烟测试：不加载模型、不碰权重，只验证依赖齐 + 模块可 import。
@@ -291,6 +295,8 @@ RUN set -eu; \
     fi
 
 COPY app/ /app/
+# 前端静态页：容器布局下 /app 旁边是 /web（与 service.py 的候选路径一致）。
+COPY web/ /web/
 
 # app/requirements.txt。
 # 必须过滤掉 torch / torch_npu / torchvision / torchaudio：基础镜像里已经装好

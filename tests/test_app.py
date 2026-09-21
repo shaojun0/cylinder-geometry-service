@@ -251,6 +251,21 @@ def test_http() -> None:
     model_hub._HUB = h
     check(c.post("/v1/unload").status_code == 200, "POST /v1/unload -> 200")
 
+    # ---- 前端静态页：挂在 "/" 但绝不能抢走 API 路由 ----------------------
+    index = os.path.join(APP_DIR, os.pardir, "web", "index.html")
+    if os.path.isfile(index):
+        r = c.get("/")
+        check(r.status_code == 200 and "text/html" in r.headers.get("content-type", ""),
+              f"GET / -> 200 text/html（前端已挂载）")
+        check("gravity_reliable" in r.text, "前端 HTML 暴露 gravity_reliable（安全判据可见）")
+    else:
+        print(f"  (未找到 {os.path.normpath(index)}，跳过前端挂载检查)")
+    check(c.get("/healthz").status_code == 200, "挂载静态目录后 /healthz 不受影响")
+    check(c.get("/v1/tasks").status_code == 200, "挂载静态目录后 /v1/tasks 不受影响")
+    check(c.post("/v1/infer", json={"task": "geometry", "image_b64": "x",
+                                    "regions": []}).status_code == 200,
+          "挂载静态目录后 /v1/infer 不受影响")
+
 
 def main() -> int:
     ap = argparse.ArgumentParser()
