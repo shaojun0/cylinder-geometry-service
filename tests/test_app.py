@@ -149,6 +149,41 @@ def test_core(data_dir: str | None) -> None:
         os.makedirs(empty)
         check(_find_moge_weight(empty) is None, "无 .pt -> 返回 None")
 
+        # 场景 D：**v2/v3 同目录**（v3 上线后的真实布局）。两者都叫 model.pt，
+        # 只能靠路径里的 moge-N 区分；否则会退化成"路径短的赢"，**静默**选错版本。
+        both = os.path.join(td, "moge", "both")
+        os.makedirs(os.path.join(both, "moge-2-vitl-normal"))
+        os.makedirs(os.path.join(both, "moge-3-vitl"))
+        open(os.path.join(both, "moge-2-vitl-normal", "model.pt"), "w").close()
+        open(os.path.join(both, "moge-3-vitl", "model.pt"), "w").close()
+        g3 = _find_moge_weight(both, version="v3")
+        check(g3 is not None and "moge-3-vitl" in g3,
+              f"v2/v3 同目录：version=v3 选 moge-3 (got={os.path.basename(os.path.dirname(str(g3)))})")
+        g2 = _find_moge_weight(both, version="v2")
+        check(g2 is not None and "moge-2-vitl-normal" in g2,
+              f"v2/v3 同目录：version=v2 选 moge-2 (got={os.path.basename(os.path.dirname(str(g2)))})")
+        gd = _find_moge_weight(both)
+        check(gd is not None and "moge-2-vitl-normal" in gd,
+              "不传 version 时默认仍是 v2")
+
+    # ---- MoGe 版本切换：归一化 + 「版本/权重必须一致」闸门 ---------------
+    from models.moge_geom import (DEFAULT_VERSION, check_version_consistency,
+                                  normalize_version)
+    check(normalize_version("v3") == "v3" and normalize_version("3") == "v3"
+          and normalize_version(" V2 ") == "v2", "版本号归一化：v3 / 3 / ' V2 '")
+    check(normalize_version("v9") is None and normalize_version(None) is None,
+          "不认识的版本 -> None")
+    check(DEFAULT_VERSION == "v2", "默认版本仍是 v2（换模型必须显式）")
+    check(check_version_consistency("/w/moge-3-vitl/model.pt", "v3") is None,
+          "v3 权重 + v3 版本 -> 放行")
+    _bad = check_version_consistency("/w/moge-2-vitl-normal/model.pt", "v3")
+    check(_bad is not None and "不一致" in _bad,
+          "v2 权重 + v3 版本 -> 必须拦下（否则静默算错）")
+    check(check_version_consistency("Ruicheng/moge-3-vitl", "v3") is None,
+          "HF repo id 也参与一致性判断")
+    check(check_version_consistency("/w/custom/mymodel.pt", "v3") is None,
+          "路径里没有版本标签 -> 不误拦")
+
     # ---- 世界系三轴投影（前端红箭头坐标系） ---------------------------
     from models.core import project_world_axes
     W2, H2 = 1280, 720

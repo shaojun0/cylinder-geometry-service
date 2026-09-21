@@ -211,9 +211,25 @@ curl -X POST localhost:8000/v1/infer -H 'Content-Type: application/json' \
 | `CYLINDER_EAGER` | `1` / `0` | 关闭图模式；**310P 强制开启** |
 | `WEIGHTS_DIR` | 路径 | 默认 `/app/weights` |
 | `MAX_RESIDENT_MODELS` | 整数 | 默认 `1` |
+| `MOGE_VERSION` | `v2`(默认) / `v3` | MoGe 版本；**默认 v2，换模型必须显式** |
+| `MOGE_WEIGHTS` | 路径 | MoGe checkpoint 的 **`.pt` 文件**（给目录会 `torch.load(目录)` 崩） |
+| `MOGE_REFINE_STEPS` | 整数，默认 `3` | 仅 v3：稀疏体素细化步数（越大越细越慢） |
 
 实际生效的策略会打印在启动日志并出现在 `/healthz` 的 `policy` 字段，
 **上机后一眼可核对是否真的生效**。
+
+#### MoGe-3（`MOGE_VERSION=v3`）
+
+- 需要 **FlexGEMM**（`flex_gemm`，编译期 `FLEX_GEMM_BUILD_CUDA=1`）——它是
+  Triton/CUDA 实现，**昇腾 NPU 上不可用**，服务会直接拒绝启动而不是给你一个坏结果。
+- **强制 float32**：flex_gemm 的稀疏细化不接受 fp16 权重（`mat1 Float vs mat2 Half`），
+  而 fp32 模型 + `use_fp16=True` 实测反而更慢（2.02s vs 1.06s）。所以 v3 忽略
+  `CYLINDER_DTYPE`，并在启动日志里说明原因。
+- **版本与权重必须一致**：`svc_weights` 下 v2/v3 同时存在时，用 v3 结构加载 v2 权重
+  **不会报错、只会静默算错**，因此启动时会做一致性校验，不一致直接抛错。
+- 实测差异（同图同框）：02_Office 平面 rms 0.39→0.25 cm、相机离地 1.887→1.773 m；
+  但**气瓶 pitch 会变**，个别实例靠近 45° 判定线时会翻转 `is_fallen` —— 换版本后
+  建议重新评估判定阈值，别默认"数值差不多"。
 
 ---
 

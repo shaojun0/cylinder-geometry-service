@@ -170,11 +170,14 @@ class ModelHub:
     def _register_defaults(self) -> None:
         self.register(TaskSpec(
             name="geometry",
-            description="MoGe-2 单目重建 + 重力世界系 + 圆柱拟合 -> 朝向/几何中心/离地高度/半径/长度",
+            description=("MoGe 单目重建（版本由 MOGE_VERSION 选：v2 / v3）+ 重力世界系 + 圆柱拟合"
+                         " -> 朝向/几何中心/离地高度/半径/长度"),
             loader=self._load_geometry,
             runner=lambda m, kw: m.run(**kw),
             weight_hints=_WEIGHT_HINTS["geometry"],
-            est_mem_mb=2500,
+            # 实测峰值（1024 max_side, CUDA）：v2 fp16 ≈ 1.3G，v3 fp32 ≈ 2.5G。
+            # 取 v3 的量级，宁大勿小。
+            est_mem_mb=3000,
             aliases=("geom", "moge"),
         ))
         self.register(TaskSpec(
