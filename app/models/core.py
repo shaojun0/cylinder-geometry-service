@@ -265,6 +265,95 @@ def height_above_plane(p: np.ndarray, frame: Dict[str, Any]) -> Optional[float]:
     return float(np.asarray(p, dtype=np.float64) @ frame["up"] - t)
 
 
+def project_world_axes(up: np.ndarray, right: np.ndarray, forward: np.ndarray,
+                       fx: float, fy: float, cx: float, cy: float,
+                       width: int, height: int,
+                       plane_offset: Optional[float] = None,
+                       anchor_v_frac: float = 0.30, target_frac: float = 0.20,
+                       min_len_m: float = 0.15, max_len_m: float = 2.5
+                       ) -> Dict[str, Any]:
+    """
+    把世界系三轴投影成图像上的 2D 箭头端点（供前端叠加「红箭头坐标系」）。
+
+    为什么在后端算：前端既没有世界系向量、也没有相机内参，自己没法投影。
+    前端只负责拿返回的端点画箭头（颜色/线宽/标签都归前端）。
+
+    锚点：
+      · 优先取「过画面下方一点的视线」与**地平面**的交点 —— 坐标系踩在地上，
+        最直观地表达重力方向；
+      · 无可用地平面（没有平面 / 交点在相机后方）时退化为该视线上固定 2 m 深处
+        的一点（anchor="ray"）。
+
+    三轴**共用**一个 3D 长度 `scale_m`，由「投影后最长的那根约占屏幕对角线的
+    target_frac」反解、再夹到 [min_len_m, max_len_m]。共用长度是刻意的：给每根轴
+    单独缩放到等屏幕长度会破坏透视关系、看不出真实朝向；代价是某根轴若几乎与
+    视线平行，投影会很短甚至缩成一点，此时用 `degenerate` 标记出来，
+    让前端别画一个假箭头。
+
+    返回的像素坐标处于**传入的 width/height 空间**；要换算到原图空间，
+    调用方自行除以缩放系数。
+    """
+    up = np.asarray(up, dtype=np.float64)
+    right = np.asarray(right, dtype=np.float64)
+    forward = np.asarray(forward, dtype=np.float64)
+    width, height = int(width), int(height)
+    target_px = max(8.0, float(target_frac) * math.hypot(width, height))
+
+    def _project(p: np.ndarray) -> Optional[np.ndarray]:
+        p = np.asarray(p, dtype=np.float64)
+        if not np.isfinite(p).all() or p[2] <= 1e-6:
+            return None                       # 落在相机背后 / 退化，不能投影
+        return np.array([fx * p[0] / p[2] + cx, fy * p[1] / p[2] + cy])
+
+    # ---- 锚点：过 (cx, cy + anchor_v_frac*H) 的视线 ----------------------
+    v0 = cy + float(anchor_v_frac) * height
+    ray = np.array([0.0, (v0 - cy) / fy, 1.0])
+    origin: Optional[np.ndarray] = None
+    anchor = "ray"
+    if plane_offset is not None and abs(float(plane_offset)) > 1e-9:
+        denom = float(ray @ up)
+        if abs(denom) > 1e-6:                 # 地平线：平面 {p·up = plane_offset}
+            s = float(plane_offset) / denom
+            if 0.05 < s < 100.0:              # 交点必须在相机前方且不离谱
+                origin = s * ray
+                anchor = "ground"
+    if origin is None:
+        origin = ray * (2.0 / ray[2])         # 退化：固定 2 m 深
+
+    o_px = _project(origin)
+    if o_px is None:
+        return {"space": "working", "anchor": anchor, "origin_px": None,
+                "scale_m": 0.0, "axes": [], "reason": "锚点落在相机背后"}
+
+    # ---- 共用的 3D 长度：按「1 m 时最长的那根」反解 ----------------------
+    axes = (("up", up), ("right", right), ("forward", forward))
+    per_m = []
+    for _name, a in axes:
+        q = _project(origin + a)              # 先量 1 m 能投出多少像素
+        per_m.append(float(np.linalg.norm(q - o_px)) if q is not None else 0.0)
+    longest = max(per_m) if per_m else 0.0
+    scale_m = 1.0 if longest <= 1e-9 else target_px / longest
+    scale_m = float(min(max(scale_m, min_len_m), max_len_m))
+
+    out_axes: List[Dict[str, Any]] = []
+    for name, a in axes:
+        tip = _project(origin + scale_m * a)
+        length_px = float(np.linalg.norm(tip - o_px)) if tip is not None else 0.0
+        out_axes.append({
+            "name": name,
+            "tip_px": None if tip is None else [round(float(tip[0]), 2), round(float(tip[1]), 2)],
+            "length_px": round(length_px, 2),
+            "degenerate": tip is None or length_px < 6.0,
+        })
+    return {
+        "space": "working",
+        "anchor": anchor,
+        "origin_px": [round(float(o_px[0]), 2), round(float(o_px[1]), 2)],
+        "scale_m": round(scale_m, 4),
+        "axes": out_axes,
+    }
+
+
 # ================================================================ 圆柱拟合
 
 

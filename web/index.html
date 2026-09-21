@@ -165,7 +165,11 @@
       </div>
 
       <div class="card">
-        <h2>2 · 叠加显示 <span style="font-weight:400;color:var(--dim);font-size:12px" id="stageNote"></span></h2>
+        <h2>2 · 叠加显示 <span style="font-weight:400;color:var(--dim);font-size:12px" id="stageNote"></span>
+          <label style="float:right;font-weight:400;font-size:12px;color:var(--dim);cursor:pointer">
+            <input type="checkbox" id="chkAxes" checked style="vertical-align:-1px"> 显示世界系坐标轴
+          </label>
+        </h2>
         <div class="body">
           <div id="stage" class="empty">
             <div id="empty">尚未选择图片</div>
@@ -175,6 +179,9 @@
             <span><i style="background:#ff4d4f"></i>倒伏 is_fallen=true</span>
             <span><i style="background:#1fbf6b"></i>直立 is_fallen=false</span>
             <span><i style="background:#8892a4"></i>未量测 / 拟合失败</span>
+            <span><i style="background:#ff2d2d"></i>世界系 ↑上（重力方向）</span>
+            <span><i style="background:#ff7a7a"></i>世界系 →右</span>
+            <span><i style="background:#b81414"></i>世界系 ↗前</span>
             <span>框内序号 ↔ 下表序号</span>
           </div>
         </div>
@@ -240,7 +247,9 @@
 </div>
 
 <footer>
-  本页面为单文件、无外部依赖。坐标说明：检测框与多边形均为上传图（已缩放到最长边 ≤1600px）的像素坐标，可直接用于叠加显示。
+  本页面为单文件、无外部依赖。坐标说明：检测框、多边形与世界系坐标轴均为上传图（已缩放到最长边 ≤1600px）的像素坐标，可直接用于叠加显示。
+  世界系三轴的 2D 端点是<b>后端</b>用相机内参投影出来的（前端没有三轴向量也没有内参），锚点取「过画面下方一点的视线」与地平面的交点；
+  三根轴共用同一个 3D 轴长，所以长短差异本身就是透视信息 —— 某根轴若几乎沿视线会被标成「几乎沿视线」而不是画一根假箭头。
   远程同一时刻只驻留一个模型：detect → geometry 切换会触发重新加载，属正常现象。
 </footer>
 
@@ -265,6 +274,8 @@
   var detections = [];         // detect 结果
   var regions = [];            // geometry 结果
   var gravity = null;          // geometry 的 gravity 字段
+  var axesOverlay = null;      // geometry 的 axes_overlay（世界系三轴的 2D 端点）
+  var showAxes = true;
   var busy = false, timerId = null, t0 = 0;
 
   /* ---------------------------------------------------------- 工具 */
@@ -328,7 +339,7 @@
       var im2 = new Image();
       im2.onload = function(){
         imgEl = im2;
-        detections = []; regions = []; gravity = null;
+        detections = []; regions = []; gravity = null; axesOverlay = null;
         renderGravity(null); renderTable(null);
         resetCanvas();
         clearBanners();
@@ -405,7 +416,7 @@
   async function runDetectAndGeometry(){
     if(busy || !dataUrl) return;
     clearBanners();
-    detections = []; regions = []; gravity = null;
+    detections = []; regions = []; gravity = null; axesOverlay = null;
     renderGravity(null); renderTable(null);
     setBusy(true, "① 检测中：正在上传并运行 YOLO-seg…");
     resetCanvas();
@@ -441,6 +452,7 @@
     }
     regions = (g.result && g.result.regions) || [];
     gravity = (g.result && g.result.gravity) || null;
+    axesOverlay = (g.result && g.result.axes_overlay) || null;
     pushRaw("geometry", g);
     renderGravity(gravity);
     renderTable(regions);
@@ -453,7 +465,7 @@
   async function runGravityOnly(){
     if(busy || !dataUrl) return;
     clearBanners();
-    detections = []; regions = []; gravity = null;
+    detections = []; regions = []; gravity = null; axesOverlay = null;
     renderGravity(null); renderTable(null); resetCanvas();
     setBusy(true, "正在估计重力（不选区域）：切换 / 加载 MoGe-2…（首次需十几秒到几十秒）");
     var g = await infer({task:"geometry", image_b64:dataUrl, regions:[]});
@@ -464,6 +476,7 @@
       return;
     }
     gravity = (g.result && g.result.gravity) || null;
+    axesOverlay = (g.result && g.result.axes_overlay) || null;
     pushRaw("geometry(regions=[])", g);
     renderGravity(gravity);
     renderTable([]);
@@ -474,6 +487,7 @@
 
   btnRun.addEventListener("click", runDetectAndGeometry);
   btnGrav.addEventListener("click", runGravityOnly);
+  $("chkAxes").addEventListener("change", function(){ showAxes = this.checked; draw(); });
   btnUnload.addEventListener("click", async function(){
     if(busy) return;
     btnUnload.disabled = true;
@@ -585,6 +599,69 @@
     if(typeof polys[0][0] === "number") return [polys];
     return polys;
   }
+  /* 世界系三轴（红箭头坐标系）。
+     后端已经把三轴投影成 2D 端点（axes_overlay），这里只负责画箭头——
+     前端拿不到世界系向量也没有内参，自己没法投影。 */
+  var AXIS_STYLE = {
+    up:      { label: "上", color: "#ff2d2d", w: 1.45 },   // 上 = 重力反方向，最重要
+    right:   { label: "右", color: "#ff7a7a", w: 1.0  },
+    forward: { label: "前", color: "#b81414", w: 1.0  }
+  };
+  function drawArrow(x0, y0, x1, y1, color, width){
+    var dx = x1 - x0, dy = y1 - y0, len = Math.sqrt(dx*dx + dy*dy);
+    if(len < 1) return;
+    ctx.strokeStyle = color; ctx.fillStyle = color;
+    ctx.lineWidth = width; ctx.setLineDash([]); ctx.lineCap = "round";
+    var head = Math.max(9, Math.min(26, len * 0.30));
+    var ux = dx / len, uy = dy / len;
+    var bx = x1 - ux * head, by = y1 - uy * head;      // 箭头底边中点
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(bx, by); ctx.stroke();
+    var px = -uy, py = ux;                              // 垂直方向
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(bx + px * head * 0.42, by + py * head * 0.42);
+    ctx.lineTo(bx - px * head * 0.42, by - py * head * 0.42);
+    ctx.closePath(); ctx.fill();
+  }
+  function drawAxes(){
+    var ax = axesOverlay;
+    if(!showAxes || !ax || ax.ok === false || !ax.origin_px) return;
+    var o = ax.origin_px;
+    var base = Math.max(2, Math.round(sentW / 500));
+    var font = "bold " + Math.max(13, Math.round(sentW/70)) + "px ui-monospace,Menlo,Consolas,monospace";
+    // 锚点：坐标系原点（画在估算出的地平面交点上）
+    ctx.beginPath();
+    ctx.arc(o[0], o[1], base * 2.4, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffffff"; ctx.fill();
+    ctx.strokeStyle = AXIS_STYLE.up.color; ctx.lineWidth = base; ctx.stroke();
+
+    (ax.axes || []).forEach(function(a){
+      var st = AXIS_STYLE[a.name] || { label: a.name, color: "#ff2d2d", w: 1.0 };
+      // 与视线几乎平行的轴投影会缩成一点——画个圈标注，不画一根假箭头
+      if(!a.tip_px || a.degenerate){
+        var r = base * 4;
+        ctx.beginPath(); ctx.arc(o[0], o[1], r, 0, Math.PI * 2);
+        ctx.strokeStyle = st.color; ctx.lineWidth = base; ctx.stroke();
+        ctx.font = font; ctx.fillStyle = st.color; ctx.textBaseline = "middle";
+        ctx.fillText(st.label + "（几乎沿视线）", o[0] + r + base*3, o[1]);
+        return;
+      }
+      drawArrow(o[0], o[1], a.tip_px[0], a.tip_px[1], st.color, base * st.w);
+      ctx.font = font; ctx.fillStyle = st.color; ctx.textBaseline = "middle";
+      ctx.fillText(st.label, a.tip_px[0] + base*3, a.tip_px[1]);
+    });
+
+    // 说明：坐标系是踩在地上的，每根轴的实际 3D 长度
+    ctx.font = "600 " + Math.max(11, Math.round(sentW/95)) + "px ui-monospace,Menlo,Consolas,monospace";
+    ctx.fillStyle = "rgba(0,0,0,.62)";
+    var cap = "世界系坐标轴 · 轴长 " + fmt(ax.scale_m, "m", 2) +
+              " · 锚点 " + (ax.anchor === "ground" ? "地平面" : "视线2m");
+    var cw = ctx.measureText(cap).width + 16;
+    var cyy = Math.max(0, o[1] - Math.max(14, Math.round(sentW/60)) - 22);
+    ctx.fillRect(o[0] - cw/2, cyy, cw, 20);
+    ctx.fillStyle = "#ffd7d7"; ctx.textBaseline = "middle";
+    ctx.fillText(cap, o[0] - cw/2 + 8, cyy + 11);
+  }
   function draw(){
     if(!imgEl) return;
     resetCanvas();
@@ -642,6 +719,8 @@
       ctx.textBaseline = "middle";
       ctx.fillText(txt, 12, 18);
     }
+
+    drawAxes();          // 世界系红箭头坐标系（画在最上层）
   }
 
   /* ---------------------------------------------------------- 7. 启动自检 */

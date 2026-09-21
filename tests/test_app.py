@@ -149,6 +149,47 @@ def test_core(data_dir: str | None) -> None:
         os.makedirs(empty)
         check(_find_moge_weight(empty) is None, "无 .pt -> 返回 None")
 
+    # ---- 世界系三轴投影（前端红箭头坐标系） ---------------------------
+    from models.core import project_world_axes
+    W2, H2 = 1280, 720
+    FX = FY = 800.0
+    CX, CY = 640.0, 360.0
+    _up = np.array([0.0, -1.0, 0.0])      # 水平相机：up = -y
+    _rt = np.array([1.0, 0.0, 0.0])
+    _fw = np.array([0.0, 0.0, 1.0])
+    ax = project_world_axes(_up, _rt, _fw, FX, FY, CX, CY, W2, H2, plane_offset=-1.6)
+    check(ax["anchor"] == "ground", f"有地平面时锚点落在地上 (anchor={ax['anchor']})")
+    ox, oy = ax["origin_px"]
+    check(abs(ox - CX) < 1.0 and abs(oy - (CY + 0.30 * H2)) < 1.0,
+          f"锚点位于预期像素 ({ox}, {oy})")
+    tips = {a["name"]: a for a in ax["axes"]}
+    check(tips["up"]["tip_px"][1] < oy - 5 and abs(tips["up"]["tip_px"][0] - ox) < 1.0,
+          "up 箭头指向画面正上方")
+    check(tips["right"]["tip_px"][0] > ox + 5 and abs(tips["right"]["tip_px"][1] - oy) < 2.0,
+          "right 箭头指向画面正右方")
+    check(tips["forward"]["tip_px"][1] < oy and abs(tips["forward"]["tip_px"][0] - ox) < 1.0,
+          "forward 沿光轴朝主点收拢（u 不变、v 变小）")
+    check(not any(tips[k]["degenerate"] for k in tips), "三轴均未退化")
+    check(0.15 <= ax["scale_m"] <= 2.5, f"scale_m 夹在 [0.15,2.5] 内 ({ax['scale_m']})")
+
+    # 无地平面 -> 退化为视线固定深度锚点，且不能崩
+    ax2 = project_world_axes(_up, _rt, _fw, FX, FY, CX, CY, W2, H2, plane_offset=None)
+    check(ax2["anchor"] == "ray" and ax2["origin_px"] is not None,
+          "无地平面 -> 回退到视线固定深度锚点")
+
+    # 锚点在相机后方（plane_offset 符号相反）时也必须回退，不能产出负数深度
+    ax3 = project_world_axes(_up, _rt, _fw, FX, FY, CX, CY, W2, H2, plane_offset=+1.6)
+    check(ax3["origin_px"] is not None, "地平面在相机后方 -> 回退而非崩溃")
+
+    # 某根轴几乎与视线平行时，必须标 degenerate，而不是画一根假箭头
+    _ray = np.array([0.0, (CY + 0.30 * H2 - CY) / FY, 1.0])
+    _ray = _ray / np.linalg.norm(_ray)
+    ax4 = project_world_axes(_ray, _rt, np.array([0.0, -1.0, 0.0]),
+                             FX, FY, CX, CY, W2, H2, plane_offset=-1.6)
+    d4 = {a["name"]: a for a in ax4["axes"]}
+    check(d4["up"]["degenerate"] is True,
+          f"与视线平行的轴被标为 degenerate (length_px={d4['up']['length_px']})")
+
     if not data_dir:
         print("  (未提供 --data，跳过真实数据回归)")
         return

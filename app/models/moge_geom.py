@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from .core import (estimate_world_frame, fit_cylinder, height_above_plane,
-                   pitch_deg, resolve_box)
+                   pitch_deg, project_world_axes, resolve_box)
 from .imageutil import b64_to_bgr, resize_max_side
 
 DEFAULT_REPO = "Ruicheng/moge-2-vitl-normal"
@@ -148,6 +148,7 @@ class MogeGeometry:
         max_side: int = 1024,
         refine_gravity: bool = True,
         return_gravity: bool = True,
+        draw_axes: bool = True,
         **_: Any,
     ) -> Dict[str, Any]:
         bgr = b64_to_bgr(image_b64)
@@ -163,8 +164,13 @@ class MogeGeometry:
         up = frame["up"]
         gravity_reliable = bool(frame["info"].get("gravity_reliable", False))
 
+        # MoGe 的内参是**归一化**的（cx=cy=0.5），乘宽/高得到工作分辨率下的像素内参。
+        # 实测 fx=K[0,0]*W 与 fy=K[1,1]*H 换算后相等，互为验证。
         K = r["intrinsics"]
         fx = float(K[0, 0]) * W if K is not None else float("nan")
+        fy = float(K[1, 1]) * H if K is not None else float("nan")
+        cx = float(K[0, 2]) * W if K is not None else float("nan")
+        cy = float(K[1, 2]) * H if K is not None else float("nan")
         fov_x = 2 * math.degrees(math.atan(0.5 * W / fx)) if (fx and fx > 0) else None
 
         result: Dict[str, Any] = {
@@ -176,6 +182,25 @@ class MogeGeometry:
         }
         if return_gravity:
             result["gravity"] = frame["info"]
+
+        # 世界系三轴叠加（前端画红箭头坐标系）。坐标换算到**上传图空间**，
+        # 前端可直接按显示尺寸等比画出，不必再关心服务内部的工作分辨率。
+        if draw_axes:
+            if K is None or not all(np.isfinite([fx, fy, cx, cy])):
+                result["axes_overlay"] = {"ok": False, "error": "内参不可用，无法投影世界系"}
+            else:
+                ax = project_world_axes(frame["up"], frame["right"], frame["forward"],
+                                        fx, fy, cx, cy, W, H, frame.get("plane_offset"))
+                if sc and sc > 0 and sc != 1.0:
+                    if ax.get("origin_px"):
+                        ax["origin_px"] = [round(v / sc, 2) for v in ax["origin_px"]]
+                    for a in ax.get("axes", []):
+                        if a.get("tip_px"):
+                            a["tip_px"] = [round(v / sc, 2) for v in a["tip_px"]]
+                        a["length_px"] = round(a.get("length_px", 0.0) / sc, 2)
+                    ax["space"] = "orig"
+                ax["ok"] = True
+                result["axes_overlay"] = ax
 
         for i, reg in enumerate(regions or []):
             item: Dict[str, Any] = {"index": i}

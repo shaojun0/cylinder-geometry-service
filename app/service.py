@@ -49,7 +49,8 @@ app = FastAPI(
 _TASK_FIELDS: Dict[str, set] = {
     "detect": {"image_b64", "conf", "iou", "max_det", "return_polygons"},
     "segment": {"image_b64", "boxes", "return_polygons"},
-    "geometry": {"image_b64", "regions", "max_side", "refine_gravity", "return_gravity"},
+    "geometry": {"image_b64", "regions", "max_side", "refine_gravity", "return_gravity",
+                 "draw_axes"},
 }
 
 

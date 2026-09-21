@@ -26,6 +26,10 @@ elev3d = asin( (p_base − p_top) · up / ‖p_base − p_top‖ )
   只有「地板先验」胜出时才把 up 当作**从场景里量出来的**结果，否则退回相机 up
   并置 `gravity_reliable: false`；`plane_rms_cm`（rms 小 = 确实锁定单一物理平面）
   随 `geometry` 响应返回，作为平面精修的置信度。
+- **世界系坐标轴叠加**：`geometry` 返回 `axes_overlay` —— 世界系三轴按相机内参投影成
+  图像上的端点（三轴**共用**同一 3D 轴长，锚点取视线与**地平面**的交点，所以坐标系是踩在地上的）。
+  前端据此画红箭头坐标系；某根轴若几乎沿视线会被标 `degenerate`，前端画圈标注而不是画一根假箭头。
+  请求可带 `draw_axes: false` 关掉。
 - **几何中心 ≠ 物理重心**：拟合圆柱后取轴线中点，消除「可见表面质心朝相机偏 `(2/π)R`」的系统偏差。
 - **昇腾适配**：`CYLINDER_DTYPE` / `CYLINDER_EAGER` 策略，310P 自动强制 fp16 + eager。
 - **可降级**：权重缺失时返回结构化 `weights_missing` 错误，不会 500。
@@ -175,6 +179,15 @@ curl -X POST localhost:8000/v1/infer -H 'Content-Type: application/json' \
                 "gravity_reliable": true,         // false 时 pitch 不可用于告警
                 "camera_tilt_deg": 17.97,
                 "plane_rms_cm": 0.4, "plane_offset_m": -1.887},
+    "axes_overlay": {                            // 世界系三轴的 2D 投影，供前端画红箭头
+      "ok": true, "space": "orig", "anchor": "ground",
+      "origin_px": [640.0, 576.0],               // 锚点=视线与地平面的交点
+      "scale_m": 0.75,                           // 三轴共用的 3D 轴长
+      "axes": [
+        {"name": "up",      "tip_px": [640.0, 470.2], "length_px": 105.8, "degenerate": false},
+        {"name": "right",   "tip_px": [738.4, 578.9], "length_px": 98.5,  "degenerate": false},
+        {"name": "forward", "tip_px": [639.1, 543.0], "length_px": 33.0,  "degenerate": false}
+      ]},
     "regions": [{
       "ok": true,
       "pitch_deg": 87.57,          // 直立≈±90, 倒伏≈0
